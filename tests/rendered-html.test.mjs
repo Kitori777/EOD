@@ -46,3 +46,24 @@ test("ships the scenario engine and removes the temporary preview", async () => 
   await access(new URL("../.openai/hosting.json", import.meta.url));
   await access(root);
 });
+
+test("includes an offline Windows desktop target", async () => {
+  const [desktopMain, desktopHtml, tauriConfig, cargoConfig] = await Promise.all([
+    readFile(new URL("../desktop/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../desktop/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
+    readFile(new URL("../src-tauri/Cargo.toml", import.meta.url), "utf8"),
+  ]);
+
+  const config = JSON.parse(tauriConfig);
+  assert.match(desktopMain, /import EyesOfOdin from "\.\.\/app\/page"/);
+  assert.match(desktopHtml, /<div id="root"><\/div>/);
+  assert.equal(config.productName, "Eyes of Odin");
+  assert.equal(config.identifier, "com.eyesofodin.scenariostudio");
+  assert.equal(config.build.frontendDist, "../desktop-dist");
+  assert.deepEqual(config.bundle.targets, ["nsis"]);
+  assert.equal(config.bundle.windows.nsis.installMode, "currentUser");
+  assert.match(cargoConfig, /tauri = \{ version = "2"/);
+  await access(new URL("../src-tauri/icons/icon.ico", import.meta.url));
+  await access(new URL("../desktop-dist/index.html", import.meta.url));
+});

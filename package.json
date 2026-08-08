@@ -2,6 +2,7 @@
   "name": "eyes-of-odin-scenario-studio",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@11.16.0",
   "engines": {
     "node": ">=22.13.0"
   },
@@ -9,7 +10,12 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "vinext build && node --test tests/rendered-html.test.mjs",
+    "test": "vinext build && vite build --config vite.desktop.config.ts && node --test tests/rendered-html.test.mjs",
+    "desktop:web:dev": "vite --config vite.desktop.config.ts --port 1420",
+    "desktop:web:build": "vite build --config vite.desktop.config.ts",
+    "desktop:dev": "scripts\\desktop.cmd dev",
+    "desktop:build": "scripts\\desktop.cmd build",
+    "desktop:icon": "tauri icon src-tauri/icons/eyes-of-odin-master.png",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
@@ -33,6 +39,7 @@
     "react-server-dom-webpack": "19.2.6",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
+    "@tauri-apps/cli": "2.11.0",
     "vinext": "0.0.50",
     "vite": "8.0.13",
     "wrangler": "4.92.0"

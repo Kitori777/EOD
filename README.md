@@ -22,6 +22,22 @@ pnpm dev
 
 Następnie otwórz `http://localhost:3000`.
 
+## Aplikacja Windows
+
+```bash
+pnpm desktop:dev
+pnpm desktop:build
+```
+
+Druga komenda tworzy instalator Windows w katalogu `src-tauri/target/release/bundle/nsis`.
+
+Pierwsza kompilacja wymaga Microsoft Visual Studio Build Tools z modułem „Desktop development with C++”.
+
+Gotowe pliki przeznaczone dla użytkownika znajdują się w `releases/0.1.0`:
+
+- `Eyes of Odin Setup 0.1.0.exe` — rekomendowany instalator,
+- `Eyes of Odin Portable 0.1.0.exe` — wersja uruchamiana bez instalacji.
+
 ## Kontrola jakości
 
 ```bash

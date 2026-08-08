@@ -37,6 +37,9 @@ yarn-error.log*
 # typescript
 next-env.d.ts
 /dist/
+/desktop-dist/
+/src-tauri/target/
+/src-tauri/gen/
 /.wrangler/
 /outputs/
 /work/

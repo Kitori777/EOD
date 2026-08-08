@@ -1,0 +1,56 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Eyes of Odin",
+  "version": "0.1.0",
+  "identifier": "com.eyesofodin.scenariostudio",
+  "build": {
+    "beforeDevCommand": ".\\node_modules\\.bin\\vite.cmd --config vite.desktop.config.ts --port 1420",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": ".\\node_modules\\.bin\\vite.cmd build --config vite.desktop.config.ts",
+    "frontendDist": "../desktop-dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Eyes of Odin — Scenario Studio",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 680,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "category": "Business",
+    "shortDescription": "Modeluj dane i scenariusze what-if",
+    "longDescription": "Eyes of Odin to interaktywne laboratorium danych, decyzji i scenariuszy what-if.",
+    "publisher": "Eyes of Odin",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["Polish", "English"],
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}
