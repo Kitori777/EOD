@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests vite.desktop.config.ts eslint.config.mjs",
     "test:unit": "node --test tests/rendered-html.test.mjs tests/chart-engine.test.mjs tests/scenario-engine.test.mjs tests/model-layout.test.mjs tests/data-import.test.mjs tests/ready-data.test.mjs tests/release-artifacts.test.mjs",
-    "test": "pnpm typecheck && pnpm lint && pnpm test:unit && pnpm build",
+    "test": "pnpm typecheck && pnpm lint && pnpm build && pnpm test:unit",
     "rust:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
     "rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
     "quality": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/quality.ps1",

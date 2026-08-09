@@ -10,10 +10,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'TypeScript typecheck zakonczyl sie bledem.' }
     pnpm lint
     if ($LASTEXITCODE -ne 0) { throw 'ESLint zakonczyl sie bledem.' }
-    pnpm test:unit
-    if ($LASTEXITCODE -ne 0) { throw 'Testy jednostkowe zakonczyly sie bledem.' }
     pnpm build
     if ($LASTEXITCODE -ne 0) { throw 'Build Vite zakonczyl sie bledem.' }
+    pnpm test:unit
+    if ($LASTEXITCODE -ne 0) { throw 'Testy jednostkowe zakonczyly sie bledem.' }
 
     $pythonFiles = Get-ChildItem -Path $projectRoot -Recurse -File -Filter '*.py' |
         Where-Object { $_.FullName -notmatch '\\(node_modules|target|dist|desktop-dist|\.venv)\\' }

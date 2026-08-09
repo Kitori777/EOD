@@ -70,6 +70,8 @@ Wszystkie istotne zmiany w Eyes of Odin są dokumentowane w tym pliku. Format je
 
 ### Naprawiono
 
+- kolejność kontroli CI na czystym komputerze GitHub: interfejs jest teraz budowany przed testami sprawdzającymi `desktop-dist`,
+- ostrzeżenie GitHub Actions o przestarzałym środowisku Node.js 20 przez aktualizację oficjalnych akcji do wersji opartych na Node.js 24,
 - nakładanie się kolejnych źródeł, transformacji i decyzji po prawej stronie modelu,
 - przywracanie zapisanej przestrzeni z blokami znajdującymi się w tym samym miejscu,
 - brak szybkiego sposobu uporządkowania i dopasowania rozbudowanego grafu,
