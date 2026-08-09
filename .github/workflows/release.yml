@@ -1,0 +1,52 @@
+name: Release Windows
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Wersja bez prefiksu v"
+        required: true
+        default: "0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.16.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm quality
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $value = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.version }}" } else { "${{ github.ref_name }}" -replace '^v', '' }
+          if ($value -notmatch '^\d+\.\d+\.\d+$') { throw "Nieprawidłowa wersja: $value" }
+          "value=$value" >> $env:GITHUB_OUTPUT
+      - name: Build signed release structure
+        shell: pwsh
+        run: ./scripts/package-release.ps1 -Version "${{ steps.version.outputs.value }}"
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.value }}
+          name: Eyes of Odin ${{ steps.version.outputs.value }}
+          generate_release_notes: true
+          files: |
+            releases/${{ steps.version.outputs.value }}/Eyes of Odin Setup ${{ steps.version.outputs.value }}.exe
+            releases/${{ steps.version.outputs.value }}/Eyes of Odin Portable ${{ steps.version.outputs.value }}.exe
+            releases/${{ steps.version.outputs.value }}/SHA256SUMS.txt

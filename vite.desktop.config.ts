@@ -2,7 +2,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  root: "desktop",
+  root: "src/desktop",
   base: "./",
   plugins: [react()],
   clearScreen: false,
@@ -12,7 +12,7 @@ export default defineConfig({
     strictPort: true,
   },
   build: {
-    outDir: "../desktop-dist",
+    outDir: "../../desktop-dist",
     emptyOutDir: true,
     sourcemap: false,
   },

@@ -18,6 +18,8 @@ if not defined VSINSTALL (
 call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -no_logo -arch=amd64
 if errorlevel 1 exit /b %errorlevel%
 
+if defined EYES_NODE_BIN set "PATH=%EYES_NODE_BIN%;%PATH%"
+
 if /I "%~1"=="dev" (
   call "%~dp0..\node_modules\.bin\tauri.cmd" dev
   exit /b %errorlevel%

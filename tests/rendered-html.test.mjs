@@ -2,68 +2,107 @@ import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
-const root = new URL("../", import.meta.url);
-
-async function render() {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
-  return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html" } }),
-    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
-    { waitUntil() {}, passThroughOnException() {} },
-  );
-}
-
-test("server renders the Eyes of Odin workspace", async () => {
-  const response = await render();
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-
-  const html = await response.text();
+test("desktop build contains the Eyes of Odin application shell", async () => {
+  const html = await readFile(new URL("../desktop-dist/index.html", import.meta.url), "utf8");
   assert.match(html, /<title>Eyes of Odin — Scenario Studio<\/title>/i);
-  assert.match(html, /EYES OF ODIN/);
-  assert.match(html, /Model wzrostu sprzedaży/);
-  assert.match(html, /WYNIKI/);
-  assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
+  assert.match(html, /<div id="root"><\/div>/i);
+  assert.match(html, /assets\/index-/i);
 });
 
-test("ships the scenario engine and removes the temporary preview", async () => {
-  const [page, layout, packageJson] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../package.json", import.meta.url), "utf8"),
+test("source contains the chart studio, time range and local workspace", async () => {
+  const [application, builder, chartEngine] = await Promise.all([
+    readFile(new URL("../src/app/EyesOfOdin.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/mechanics/charts/components/ChartBuilder.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/mechanics/charts/engine/chart-engine.ts", import.meta.url), "utf8"),
   ]);
-
-  assert.match(page, /function parseCsv/);
-  assert.match(page, /const calculate = \(item: Scenario\)/);
-  assert.match(page, /localStorage\.setItem/);
-  assert.match(page, /choices: \{ pricing: "1", campaign: "4", market: "9" \}/);
-  assert.match(layout, /lang="pl"/);
-  assert.doesNotMatch(packageJson, /react-loading-skeleton/);
-  await assert.rejects(access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)));
-  await assert.rejects(access(new URL("../app/_sites-preview/preview.css", import.meta.url)));
-  await access(new URL("../.openai/hosting.json", import.meta.url));
-  await access(root);
+  assert.match(application, /ChartStudio/);
+  assert.match(application, /localStorage\.setItem/);
+  assert.match(builder, /type="datetime-local"/);
+  assert.match(builder, /Zakres czasu/);
+  assert.match(chartEngine, /passesTimeRange/);
 });
 
-test("includes an offline Windows desktop target", async () => {
-  const [desktopMain, desktopHtml, tauriConfig, cargoConfig] = await Promise.all([
-    readFile(new URL("../desktop/main.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../desktop/index.html", import.meta.url), "utf8"),
+test("source provides a calm home screen and an on-demand chart editor", async () => {
+  const [application, home, studio] = await Promise.all([
+    readFile(new URL("../src/app/EyesOfOdin.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/views/HomeView.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/mechanics/charts/components/ChartStudio.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(application, /homeOpen/);
+  assert.match(home, /t\("loadData"\)/);
+  assert.match(home, /t\("resume"\)/);
+  assert.match(studio, /chart-editor-drawer/);
+  assert.match(studio, /chart-card-summary/);
+});
+
+test("settings provide persisted themes, accents, languages and workspace controls", async () => {
+  const [settings, preferences, translations, styles] = await Promise.all([
+    readFile(new URL("../src/app/settings/SettingsDialog.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/settings/preferences.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/i18n/translations.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/styles/app.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(settings, /appearance.*language.*workspace.*about/s);
+  assert.match(settings, /Odin Dark/);
+  assert.match(preferences, /eyes-of-odin-preferences-v2/);
+  assert.match(preferences, /reduceMotion/);
+  assert.match(translations, /Application settings/);
+  assert.match(styles, /data-theme="midnight"/);
+  assert.match(styles, /data-accent="violet"/);
+});
+
+test("workspace panels are actionable and the chart view has no reserved empty row", async () => {
+  const [application, styles] = await Promise.all([
+    readFile(new URL("../src/app/EyesOfOdin.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/styles/app.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(application, /setShowExplorer/);
+  assert.match(application, /setShowInspector/);
+  assert.match(application, /setBottomPanelMode/);
+  assert.match(application, /if \(controller\.signal\.aborted\) throw new DOMException\("Import anulowany\."/);
+  assert.match(application, /Pomoc i informacje/);
+  assert.match(application, /Pobrano raport porównania/);
+  assert.match(styles, /\.main-grid\.charts-mode \{ grid-template-rows: minmax\(0, 1fr\); \}/);
+  assert.doesNotMatch(styles, /\.main-grid\.charts-mode \{ grid-template-rows: minmax\(480px, 1fr\) 118px; \}/);
+});
+
+test("ships an offline Windows target as version 0.1.0", async () => {
+  const [desktopMain, desktopHtml, tauriConfig, cargoConfig, packageJson] = await Promise.all([
+    readFile(new URL("../src/desktop/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/desktop/index.html", import.meta.url), "utf8"),
     readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
     readFile(new URL("../src-tauri/Cargo.toml", import.meta.url), "utf8"),
+    readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
-
   const config = JSON.parse(tauriConfig);
-  assert.match(desktopMain, /import EyesOfOdin from "\.\.\/app\/page"/);
+  assert.match(desktopMain, /import EyesOfOdin from "\.\.\/app\/EyesOfOdin"/);
   assert.match(desktopHtml, /<div id="root"><\/div>/);
   assert.equal(config.productName, "Eyes of Odin");
+  assert.equal(config.version, "0.1.0");
+  assert.equal(JSON.parse(packageJson).version, "0.1.0");
   assert.equal(config.identifier, "com.eyesofodin.scenariostudio");
   assert.equal(config.build.frontendDist, "../desktop-dist");
   assert.deepEqual(config.bundle.targets, ["nsis"]);
   assert.equal(config.bundle.windows.nsis.installMode, "currentUser");
+  assert.match(cargoConfig, /version = "0.1.0"/);
   assert.match(cargoConfig, /tauri = \{ version = "2"/);
   await access(new URL("../src-tauri/icons/icon.ico", import.meta.url));
-  await access(new URL("../desktop-dist/index.html", import.meta.url));
+  await access(new URL("../src/mechanics/charts/components/ChartStudio.tsx", import.meta.url));
+  await access(new URL("../src/mechanics/data/workers/workbook.worker.ts", import.meta.url));
+  await access(new URL("../src/mechanics/data/workers/delimited.worker.ts", import.meta.url));
+  await access(new URL("../src/mechanics/data/importers/parquet-import.ts", import.meta.url));
+});
+
+test("removed starter stacks do not remain in the desktop repository", async () => {
+  for (const path of ["../app", "../worker", "../db", "../drizzle", "../examples", "../.openai", "../next.config.ts", "../vite.config.ts"]) {
+    await assert.rejects(access(new URL(path, import.meta.url)));
+  }
+});
+
+test("ships three ready datasets in CSV and XLSX", async () => {
+  for (const interval of ["5-minutes", "10-minutes", "15-minutes"]) {
+    const stem = `eyes_of_odin_${interval.replace("-minutes", "_minutes")}`;
+    await access(new URL(`../data/ready/${interval}/${stem}.csv`, import.meta.url));
+    await access(new URL(`../data/ready/${interval}/${stem}.xlsx`, import.meta.url));
+  }
 });

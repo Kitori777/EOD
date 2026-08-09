@@ -1,48 +1,51 @@
 {
-  "name": "eyes-of-odin-scenario-studio",
+  "name": "eyes-of-odin",
   "version": "0.1.0",
   "private": true,
+  "description": "Lokalne studio wizualizacji danych, limitów i scenariuszy what-if.",
   "packageManager": "pnpm@11.16.0",
   "engines": {
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "vinext dev",
-    "build": "vinext build",
-    "start": "vinext start",
-    "test": "vinext build && vite build --config vite.desktop.config.ts && node --test tests/rendered-html.test.mjs",
+    "dev": "vite --config vite.desktop.config.ts --port 1420",
+    "build": "vite build --config vite.desktop.config.ts",
+    "start": "vite preview --config vite.desktop.config.ts --port 1420",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests vite.desktop.config.ts eslint.config.mjs",
+    "test:unit": "node --test tests/rendered-html.test.mjs tests/chart-engine.test.mjs tests/scenario-engine.test.mjs tests/model-layout.test.mjs tests/data-import.test.mjs tests/ready-data.test.mjs tests/release-artifacts.test.mjs",
+    "test": "pnpm typecheck && pnpm lint && pnpm test:unit && pnpm build",
+    "rust:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
+    "rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
+    "quality": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/quality.ps1",
     "desktop:web:dev": "vite --config vite.desktop.config.ts --port 1420",
     "desktop:web:build": "vite build --config vite.desktop.config.ts",
     "desktop:dev": "scripts\\desktop.cmd dev",
     "desktop:build": "scripts\\desktop.cmd build",
-    "desktop:icon": "tauri icon src-tauri/icons/eyes-of-odin-master.png",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "release:package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
+    "desktop:icon": "tauri icon src-tauri/icons/eyes-of-odin-master.png"
   },
   "dependencies": {
-    "drizzle-orm": "0.45.2",
-    "next": "16.2.6",
+    "echarts": "6.1.0",
+    "hyparquet": "1.28.1",
+    "hyparquet-compressors": "1.1.1",
+    "papaparse": "5.5.3",
     "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "react-dom": "19.2.6",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.37.1",
-    "@tailwindcss/postcss": "4.2.1",
+    "@eslint/js": "9.39.4",
+    "@tauri-apps/cli": "2.11.0",
     "@types/node": "22.19.19",
+    "@types/papaparse": "5.3.16",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
-    "@vitejs/plugin-rsc": "0.5.26",
-    "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.2.6",
-    "react-server-dom-webpack": "19.2.6",
-    "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
-    "@tauri-apps/cli": "2.11.0",
-    "vinext": "0.0.50",
-    "vite": "8.0.13",
-    "wrangler": "4.92.0"
+    "typescript-eslint": "8.66.0",
+    "vite": "8.0.13"
   },
   "type": "module"
 }
