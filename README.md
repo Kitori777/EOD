@@ -11,7 +11,7 @@
 </div>
 
 <div align="center">
-  <a href="https://github.com/Kitori2137/EyesOfOdin/releases/latest"><img alt="Pobierz najnowszą wersję" src="https://img.shields.io/badge/Pobierz-najnowszy%20build-39d8c2?style=for-the-badge" /></a>
+  <a href="https://github.com/Kitori777/EOD/releases/latest"><img alt="Pobierz najnowszą wersję" src="https://img.shields.io/badge/Pobierz-najnowszy%20build-39d8c2?style=for-the-badge" /></a>
   <a href="#aktualizacja-do-najnowszego-builda"><img alt="Aktualizuj Eyes of Odin" src="https://img.shields.io/badge/Aktualizuj-instrukcja-5f8cff?style=for-the-badge" /></a>
 </div>
 
@@ -19,7 +19,7 @@ Eyes of Odin pozwala wczytać własny plik, wybrać osie X i Y, ograniczyć anal
 
 ## Pobieranie i instalacja
 
-Najprostsza opcja dla większości użytkowników: otwórz [najnowsze wydanie](https://github.com/Kitori2137/EyesOfOdin/releases/latest), rozwiń **Assets** i uruchom plik `Eyes of Odin Setup x.y.z.exe`. Instalacja odbywa się dla bieżącego użytkownika i nie wymaga konta administratora.
+Najprostsza opcja dla większości użytkowników: otwórz [najnowsze wydanie](https://github.com/Kitori777/EOD/releases/latest), rozwiń **Assets** i uruchom plik `Eyes of Odin Setup x.y.z.exe`. Instalacja odbywa się dla bieżącego użytkownika i nie wymaga konta administratora.
 
 | Sposób | Dla kogo | Co zrobić |
 |---|---|---|
@@ -32,7 +32,7 @@ Najprostsza opcja dla większości użytkowników: otwórz [najnowsze wydanie](h
 Uruchom PowerShell i wklej:
 
 ```powershell
-irm https://raw.githubusercontent.com/Kitori2137/EyesOfOdin/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/Kitori777/EOD/main/scripts/install.ps1 | iex
 ```
 
 Skrypt automatycznie rozpoznaje najnowsze wydanie, pobiera jego instalator, sprawdza sumę SHA-256 i instaluje aplikację dla bieżącego użytkownika. Ta sama komenda służy do pierwszej instalacji i aktualizacji.
@@ -44,7 +44,7 @@ Przed pierwszą publiczną wersją można również pobrać lokalnie przygotowan
 Zamknij Eyes of Odin, uruchom PowerShell i wklej tę samą komendę:
 
 ```powershell
-irm https://raw.githubusercontent.com/Kitori2137/EyesOfOdin/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/Kitori777/EOD/main/scripts/install.ps1 | iex
 ```
 
 Aktualizator pobiera zawartość najnowszego wydania nawet wtedy, gdy poprawiony build nadal ma numer `0.1.0`. Zapisana lokalnie przestrzeń robocza pozostaje bez zmian. Jeżeli wolisz zobaczyć zwykłe okno instalatora, pobierz skrypt i uruchom go z parametrem `-Interactive`.

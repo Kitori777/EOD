@@ -22,7 +22,7 @@ test("release 0.1.0 contains verified setup and portable executables", async () 
 
 test("one-command installer resolves the latest verified GitHub release", async () => {
   const installer = await readFile(new URL("../scripts/install.ps1", import.meta.url), "utf8");
-  assert.match(installer, /Kitori2137\/EyesOfOdin/);
+  assert.match(installer, /Kitori777\/EOD/);
   assert.match(installer, /SHA256/);
   assert.match(installer, /releases\/latest/);
   assert.match(installer, /EyesOfOdin-Updater/);

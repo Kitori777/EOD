@@ -8,7 +8,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$repository = 'Kitori2137/EyesOfOdin'
+$repository = 'Kitori777/EOD'
 $temporaryDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("eyes-of-odin-" + [guid]::NewGuid().ToString('N'))
 
 try {

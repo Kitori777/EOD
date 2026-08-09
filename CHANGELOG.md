@@ -45,6 +45,7 @@ Wszystkie istotne zmiany w Eyes of Odin są dokumentowane w tym pliku. Format je
 
 ### Zmieniono
 
+- zaktualizowano wszystkie odnośniki pobierania i aktualizacji do docelowego repozytorium `Kitori777/EOD`,
 - przebudowano ustawienia z małego okna trzech przełączników na czytelne centrum konfiguracji,
 - nowe bloki są umieszczane w pierwszym wolnym miejscu zamiast przy stałej prawej krawędzi płótna,
 - płótno modelu dynamicznie dopasowuje rozmiar do zawartości,

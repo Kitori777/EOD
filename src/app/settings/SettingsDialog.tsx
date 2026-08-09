@@ -64,7 +64,7 @@ export function SettingsDialog(props: Props) {
               <Toggle label={t("resultsPanel")} description={t("resultsDescription")} checked={props.showResults} onChange={props.onShowResults} />
               <Toggle label={t("snapGrid")} description={t("snapGridDescription")} checked={preferences.snapToGrid} onChange={(snapToGrid) => updatePreferences({ snapToGrid })} />
             </>}
-            {section === "about" && <div className="about-settings"><div className="about-mark"><span className="brand-mark"><i /><i /><i /></span><div><strong>Eyes of Odin</strong><small>{t("version")} 0.1.0</small></div></div><p>✓ {t("localFirst")}</p><a href="https://github.com/Kitori2137/EyesOfOdin/releases/latest" target="_blank" rel="noreferrer">{t("checkUpdates")} <span>↗</span></a><small>{t("releaseDescription")}</small></div>}
+            {section === "about" && <div className="about-settings"><div className="about-mark"><span className="brand-mark"><i /><i /><i /></span><div><strong>Eyes of Odin</strong><small>{t("version")} 0.1.0</small></div></div><p>✓ {t("localFirst")}</p><a href="https://github.com/Kitori777/EOD/releases/latest" target="_blank" rel="noreferrer">{t("checkUpdates")} <span>↗</span></a><small>{t("releaseDescription")}</small></div>}
           </div>
         </div>
         <footer><button className="secondary-button" onClick={restoreAll}>{t("restoreDefaults")}</button><button className="primary-button" onClick={props.onClose}>{t("done")}</button></footer>
