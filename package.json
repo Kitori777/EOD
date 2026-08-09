@@ -1,6 +1,6 @@
 {
   "name": "eyes-of-odin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Lokalne studio wizualizacji danych, limitów i scenariuszy what-if.",
   "packageManager": "pnpm@11.16.0",
@@ -13,7 +13,7 @@
     "start": "vite preview --config vite.desktop.config.ts --port 1420",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests vite.desktop.config.ts eslint.config.mjs",
-    "test:unit": "node --test tests/rendered-html.test.mjs tests/chart-engine.test.mjs tests/scenario-engine.test.mjs tests/model-layout.test.mjs tests/data-import.test.mjs tests/ready-data.test.mjs tests/release-artifacts.test.mjs",
+    "test:unit": "node --test tests/rendered-html.test.mjs tests/chart-engine.test.mjs tests/scenario-engine.test.mjs tests/model-layout.test.mjs tests/workspace-layout.test.mjs tests/data-import.test.mjs tests/ready-data.test.mjs tests/release-artifacts.test.mjs",
     "test": "pnpm typecheck && pnpm lint && pnpm build && pnpm test:unit",
     "rust:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
     "rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",

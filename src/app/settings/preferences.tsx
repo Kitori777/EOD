@@ -1,7 +1,7 @@
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 
 export type AppLanguage = "pl" | "en";
-export type AppTheme = "odin" | "midnight" | "graphite";
+export type AppTheme = "aurora" | "odin" | "midnight" | "graphite";
 export type AccentColor = "teal" | "blue" | "violet" | "amber";
 export type InterfaceDensity = "comfortable" | "compact";
 
@@ -14,11 +14,11 @@ export type AppPreferences = {
   snapToGrid: boolean;
 };
 
-const STORAGE_KEY = "eyes-of-odin-preferences-v2";
+const STORAGE_KEY = "eyes-of-odin-preferences-v3";
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
   language: "pl",
-  theme: "odin",
+  theme: "aurora",
   accent: "teal",
   density: "comfortable",
   reduceMotion: false,

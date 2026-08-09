@@ -3,7 +3,7 @@
   <h1>Eyes of Odin</h1>
   <p><strong>Lokalne studio wizualizacji danych, limitów i scenariuszy „co, jeśli…”.</strong></p>
   <p>
-    <img alt="Wersja 0.1.0" src="https://img.shields.io/badge/version-0.1.0-39d8c2" />
+    <img alt="Wersja 0.1.1" src="https://img.shields.io/badge/version-0.1.1-39d8c2" />
     <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-2d7dff" />
     <img alt="13 formatów danych" src="https://img.shields.io/badge/data-13%20formats-d7ff45" />
     <img alt="Local first" src="https://img.shields.io/badge/privacy-local--first-9aa6b8" />
@@ -37,7 +37,7 @@ irm https://raw.githubusercontent.com/Kitori777/EOD/main/scripts/install.ps1 | i
 
 Skrypt automatycznie rozpoznaje najnowsze wydanie, pobiera jego instalator, sprawdza sumę SHA-256 i instaluje aplikację dla bieżącego użytkownika. Ta sama komenda służy do pierwszej instalacji i aktualizacji.
 
-Przed pierwszą publiczną wersją można również pobrać lokalnie przygotowany `Eyes of Odin Setup 0.1.0.exe` z katalogu [releases/0.1.0](releases/0.1.0). Po opublikowaniu taga `v0.1.0` GitHub automatycznie utworzy właściwą stronę wydania i doda zweryfikowane pliki.
+Po opublikowaniu taga `v0.1.1` GitHub automatycznie utworzy stronę wydania i dołączy instalator, wersję portable oraz zweryfikowane sumy SHA-256.
 
 ## Aktualizacja do najnowszego builda
 
@@ -47,7 +47,7 @@ Zamknij Eyes of Odin, uruchom PowerShell i wklej tę samą komendę:
 irm https://raw.githubusercontent.com/Kitori777/EOD/main/scripts/install.ps1 | iex
 ```
 
-Aktualizator pobiera zawartość najnowszego wydania nawet wtedy, gdy poprawiony build nadal ma numer `0.1.0`. Zapisana lokalnie przestrzeń robocza pozostaje bez zmian. Jeżeli wolisz zobaczyć zwykłe okno instalatora, pobierz skrypt i uruchom go z parametrem `-Interactive`.
+Aktualizator pobiera zawartość najnowszego wydania. Zapisana lokalnie przestrzeń robocza pozostaje bez zmian. Jeżeli wolisz zobaczyć zwykłe okno instalatora, pobierz skrypt i uruchom go z parametrem `-Interactive`.
 
 ## Najważniejsze możliwości
 
@@ -130,8 +130,8 @@ Pełna mapa plików i przepływ danych są opisane w [GUIDE.md](GUIDE.md#archite
 
 ## Prywatność
 
-Eyes of Odin 0.1.0 nie wysyła importowanych danych do serwera. Pliki są odczytywane lokalnie, a pulpit i szablony są zapisywane w pamięci aplikacji na danym komputerze.
+Eyes of Odin 0.1.1 nie wysyła importowanych danych do serwera. Pliki są odczytywane lokalnie, a pełna sesja projektu jest zapisywana na danym komputerze.
 
 ## Status projektu
 
-Wersja 0.1.0 jest obecnie rozwijana przed pierwszą publikacją. Historia wszystkich zmian znajduje się w [CHANGELOG.md](CHANGELOG.md).
+Aktualna wersja to 0.1.1. Historia wszystkich zmian znajduje się w [CHANGELOG.md](CHANGELOG.md).

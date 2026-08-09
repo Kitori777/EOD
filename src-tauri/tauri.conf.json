@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Eyes of Odin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.eyesofodin.scenariostudio",
   "build": {
     "beforeDevCommand": ".\\node_modules\\.bin\\vite.cmd --config vite.desktop.config.ts --port 1420",

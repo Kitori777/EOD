@@ -22,7 +22,7 @@ function csvCell(value: string | number) {
 
 export function ThresholdReportPanel({ rows, columns, charts, sampled = false, datasetId }: Props) {
   const [filter, setFilter] = useState<"all" | ThresholdStatus>("all");
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [storedReports, setStoredReports] = useState<Record<string, ReturnType<typeof buildThresholdReport>>>({});
   const [loadingExact, setLoadingExact] = useState(false);
   useEffect(() => {

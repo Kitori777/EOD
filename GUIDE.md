@@ -1,12 +1,12 @@
 # Eyes of Odin — przewodnik aplikacji i projektu
 
-Ten dokument wyjaśnia sposób korzystania z Eyes of Odin 0.1.0 oraz pokazuje, gdzie znajduje się każda mechanika. Jest przeznaczony zarówno dla użytkownika aplikacji, jak i osoby rozwijającej projekt.
+Ten dokument wyjaśnia sposób korzystania z Eyes of Odin 0.1.1 oraz pokazuje, gdzie znajduje się każda mechanika. Jest przeznaczony zarówno dla użytkownika aplikacji, jak i osoby rozwijającej projekt.
 
 ## 1. Czym jest Eyes of Odin
 
 Eyes of Odin to lokalna przestrzeń do eksplorowania danych i sprawdzania konsekwencji zmian. Użytkownik może wczytać plik tekstowy, JSON, skoroszyt albo Parquet, zbudować kilka powiązanych wizualizacji, zawęzić dane do wybranego czasu, ustawić bezpieczne granice oraz modelować warianty „co, jeśli…”.
 
-Wersja 0.1.0 działa bez konta. Dane nie są przesyłane do zewnętrznej usługi.
+Wersja 0.1.1 działa bez konta. Dane nie są przesyłane do zewnętrznej usługi.
 
 ## 2. Główne obszary interfejsu
 
@@ -16,7 +16,7 @@ Po uruchomieniu aplikacja pokazuje spokojny ekran startowy zamiast całego edyto
 
 - wczytać własny plik,
 - kontynuować lokalnie zapisaną przestrzeń,
-- otworzyć gotowy pulpit demonstracyjny,
+- rozpocząć pusty projekt bez przykładowych danych,
 - przejść bezpośrednio do modelowania scenariusza.
 
 Pełne panele robocze pojawiają się dopiero po wybraniu zadania. Kliknięcie logo lub pozycji **Start** przywraca stronę główną bez usuwania pracy.
@@ -180,7 +180,7 @@ src-tauri/                natywne okno, ikony i konfiguracja instalatora
 data/ready/               gotowe zestawy CSV/XLSX oraz opis schematu
 scripts/                  uruchamianie, instalacja i kontrola jakości
 tests/                    testy mechanik i struktury wydania
-releases/0.1.0/           instalator, portable i sumy SHA-256
+releases/<wersja>/        instalator, portable i sumy SHA-256
 ```
 
 ## 5. Przepływ danych
@@ -219,7 +219,7 @@ flowchart LR
 
 ## 7. Zapis lokalny
 
-Przestrzeń robocza, scenariusze, wykresy i szablony są zapisywane w `localStorage` pod kluczem `eyes-of-odin-workspace-v1`. Układ paneli używa osobnego klucza `eyes-of-odin-ui-v1`. Fragmenty dużych zbiorów trafiają do IndexedDB w bazie `eyes-of-odin-data-v1`.
+Pełna przestrzeń robocza — dane, scenariusze, wykresy, model i aktywny widok — jest zapisywana w IndexedDB. Lekki znacznik sesji używa klucza `eyes-of-odin-workspace-v2`, a układ paneli osobnego klucza `eyes-of-odin-ui-v1`. Starszy zapis `eyes-of-odin-workspace-v1` jest migrowany przy pierwszym użyciu opcji „Kontynuuj pracę”.
 
 Usunięcie danych przeglądarki lub magazynu aplikacji usuwa lokalnie zapisany stan. Importowany plik źródłowy nie jest modyfikowany.
 
@@ -249,7 +249,7 @@ Rozmieszczanie elementów należy rozwijać w `src/mechanics/modeling/layout`. F
 ### Publikowanie wydania GitHub
 
 1. Upewnij się, że `package.json`, `src-tauri/tauri.conf.json` i tag mają ten sam numer.
-2. Wypchnij tag, np. `v0.1.0`.
+2. Wypchnij tag, np. `v0.1.1`.
 3. `.github/workflows/release.yml` uruchomi pełną kontrolę jakości i kompilację Tauri.
 4. `scripts/package-release.ps1` przygotuje instalator, portable oraz `SHA256SUMS.txt`.
 5. Workflow utworzy GitHub Release, z którego korzysta `scripts/install.ps1` oraz przycisk pobierania w README.

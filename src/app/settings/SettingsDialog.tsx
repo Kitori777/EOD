@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { useI18n } from "../i18n/translations";
+import { APP_VERSION } from "../version";
 import { useAppPreferences, type AccentColor, type AppTheme } from "./preferences";
 
 type SettingsSection = "appearance" | "language" | "workspace" | "about";
@@ -18,6 +19,7 @@ type Props = {
 };
 
 const themes: Array<{ id: AppTheme; label: string; colors: string[] }> = [
+  { id: "aurora", label: "Aurora Light", colors: ["#f5f8fb", "#ffffff", "#0f9f91"] },
   { id: "odin", label: "Odin Dark", colors: ["#07090d", "#151a24", "#39d8c2"] },
   { id: "midnight", label: "Midnight", colors: ["#070b14", "#111a2b", "#5f8cff"] },
   { id: "graphite", label: "Graphite", colors: ["#101113", "#1a1c20", "#a78bfa"] },
@@ -64,7 +66,7 @@ export function SettingsDialog(props: Props) {
               <Toggle label={t("resultsPanel")} description={t("resultsDescription")} checked={props.showResults} onChange={props.onShowResults} />
               <Toggle label={t("snapGrid")} description={t("snapGridDescription")} checked={preferences.snapToGrid} onChange={(snapToGrid) => updatePreferences({ snapToGrid })} />
             </>}
-            {section === "about" && <div className="about-settings"><div className="about-mark"><span className="brand-mark"><i /><i /><i /></span><div><strong>Eyes of Odin</strong><small>{t("version")} 0.1.0</small></div></div><p>✓ {t("localFirst")}</p><a href="https://github.com/Kitori777/EOD/releases/latest" target="_blank" rel="noreferrer">{t("checkUpdates")} <span>↗</span></a><small>{t("releaseDescription")}</small></div>}
+            {section === "about" && <div className="about-settings"><div className="about-mark"><span className="brand-mark"><i /><i /><i /></span><div><strong>Eyes of Odin</strong><small>{t("version")} {APP_VERSION}</small></div></div><p>✓ {t("localFirst")}</p><a href="https://github.com/Kitori777/EOD/releases/latest" target="_blank" rel="noreferrer">{t("checkUpdates")} <span>↗</span></a><small>{t("releaseDescription")}</small></div>}
           </div>
         </div>
         <footer><button className="secondary-button" onClick={restoreAll}>{t("restoreDefaults")}</button><button className="primary-button" onClick={props.onClose}>{t("done")}</button></footer>

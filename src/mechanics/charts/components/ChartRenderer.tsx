@@ -6,12 +6,14 @@ import { init, use as registerECharts, type EChartsCoreOption, type EChartsType 
 import { CanvasRenderer } from "echarts/renderers";
 import { useEffect, useMemo, useRef } from "react";
 
+import { useAppPreferences } from "../../../app/settings/preferences";
 import { buildChartDataset, buildThresholdReport } from "../engine/chart-engine";
 import type { ChartColumn, ChartDefinition, DataRow } from "../types/chart-types";
 
 registerECharts([BarChart, LineChart, ScatterChart, DataZoomComponent, GridComponent, LegendComponent, MarkAreaComponent, MarkLineComponent, MarkPointComponent, TooltipComponent, CanvasRenderer]);
 
 const colors = ["#43d9c5", "#6f93ff", "#f0b45a", "#a48aff", "#80a7c7"];
+const lightColors = ["#0f9f91", "#3972db", "#c8790a", "#7657d5", "#527b98"];
 const numberFormatter = new Intl.NumberFormat("pl-PL", { notation: "compact", maximumFractionDigits: 1 });
 
 function formatAxisValue(value: unknown) {
@@ -29,6 +31,8 @@ type Props = {
 };
 
 export function ChartRenderer({ rows, columns, definition, height = 270, syncedX, onSyncX }: Props) {
+  const { preferences } = useAppPreferences();
+  const isLight = preferences.theme === "aurora";
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<EChartsType | null>(null);
   const dataset = useMemo(() => buildChartDataset(rows, definition, columns), [rows, definition, columns]);
@@ -64,19 +68,19 @@ export function ChartRenderer({ rows, columns, definition, height = 270, syncedX
     const option: EChartsCoreOption = {
       animationDuration: 320,
       animationEasing: "cubicOut",
-      color: colors,
+      color: isLight ? lightColors : colors,
       grid: { left: 66, right: dataset.series.length === 1 && !isScatter ? 52 : 24, top: dataset.series.length > 1 ? 48 : 28, bottom: dataset.categories.length > 20 ? 58 : 46, containLabel: false },
-      legend: dataset.series.length > 1 ? { top: 5, left: 60, textStyle: { color: "#9aa6b8", fontSize: 11 }, itemWidth: 18, itemHeight: 4, itemGap: 18 } : undefined,
+      legend: dataset.series.length > 1 ? { top: 5, left: 60, textStyle: { color: isLight ? "#687888" : "#9aa6b8", fontSize: 11 }, itemWidth: 18, itemHeight: 4, itemGap: 18 } : undefined,
       tooltip: {
         trigger: isScatter ? "item" : "axis",
         axisPointer: { type: isScatter ? "cross" : "line", lineStyle: { color: "#7d8ca3", type: "dashed", width: 1 } },
-        backgroundColor: "rgba(10, 15, 22, .98)",
-        borderColor: "#3a4657",
+        backgroundColor: isLight ? "rgba(255, 255, 255, .98)" : "rgba(10, 15, 22, .98)",
+        borderColor: isLight ? "#d5dee5" : "#3a4657",
         borderWidth: 1,
         padding: [10, 12],
-        textStyle: { color: "#e6ebf2", fontSize: 12, lineHeight: 20 },
+        textStyle: { color: isLight ? "#18232d" : "#e6ebf2", fontSize: 12, lineHeight: 20 },
         valueFormatter: formatAxisValue,
-        extraCssText: "box-shadow:0 14px 36px rgba(0,0,0,.38);border-radius:7px",
+        extraCssText: `box-shadow:0 14px 36px rgba(26,48,62,${isLight ? ".16" : ".38"});border-radius:7px`,
       },
       xAxis: {
         type: isScatter ? "value" : "category",
@@ -84,23 +88,23 @@ export function ChartRenderer({ rows, columns, definition, height = 270, syncedX
         name: definition.xField,
         nameLocation: "middle",
         nameGap: 32,
-        nameTextStyle: { color: "#758298", fontSize: 10, fontWeight: 500 },
-        axisLine: { lineStyle: { color: "#354152" } },
+        nameTextStyle: { color: isLight ? "#71818f" : "#758298", fontSize: 10, fontWeight: 500 },
+        axisLine: { lineStyle: { color: isLight ? "#cbd6dd" : "#354152" } },
         axisTick: { show: false },
-        axisLabel: { color: "#8793a6", fontSize: 10, hideOverlap: true, margin: 11, formatter: isScatter ? formatAxisValue : undefined },
-        splitLine: { show: isScatter, lineStyle: { color: "#202a36", type: "dashed" } },
+        axisLabel: { color: isLight ? "#687888" : "#8793a6", fontSize: 10, hideOverlap: true, margin: 11, formatter: isScatter ? formatAxisValue : undefined },
+        splitLine: { show: isScatter, lineStyle: { color: isLight ? "#e3eaee" : "#202a36", type: "dashed" } },
       },
       yAxis: {
         type: "value",
         name: definition.type === "histogram" ? "Liczba" : definition.yFields.join(" · "),
-        nameTextStyle: { color: "#758298", fontSize: 10, fontWeight: 500, padding: [0, 0, 4, 0] },
+        nameTextStyle: { color: isLight ? "#71818f" : "#758298", fontSize: 10, fontWeight: 500, padding: [0, 0, 4, 0] },
         axisLine: { show: false },
         axisTick: { show: false },
-        axisLabel: { color: "#8793a6", fontSize: 10, margin: 12, formatter: formatAxisValue },
-        splitLine: { lineStyle: { color: "#202a36", type: "dashed" } },
+        axisLabel: { color: isLight ? "#687888" : "#8793a6", fontSize: 10, margin: 12, formatter: formatAxisValue },
+        splitLine: { lineStyle: { color: isLight ? "#e3eaee" : "#202a36", type: "dashed" } },
         scale: isScatter,
       },
-      dataZoom: dataset.categories.length > 20 ? [{ type: "inside", xAxisIndex: 0 }, { type: "slider", height: 12, bottom: 9, borderColor: "#28303c", fillerColor: "rgba(57,216,194,.14)", backgroundColor: "#111720", showDetail: false }] : undefined,
+      dataZoom: dataset.categories.length > 20 ? [{ type: "inside", xAxisIndex: 0 }, { type: "slider", height: 12, bottom: 9, borderColor: isLight ? "#d5dee5" : "#28303c", fillerColor: isLight ? "rgba(15,159,145,.16)" : "rgba(57,216,194,.14)", backgroundColor: isLight ? "#f1f5f7" : "#111720", showDetail: false }] : undefined,
       series: dataset.series.map((series) => {
         const rule = (definition.thresholds ?? []).find((item) => item.enabled && item.field === series.name);
         const violations = thresholdReport.events.filter((event) => event.field === series.name).flatMap((event) => event.violations).filter((item) => dataset.categories.includes(item.x)).slice(0, 250);
@@ -116,13 +120,13 @@ export function ChartRenderer({ rows, columns, definition, height = 270, syncedX
         lineStyle: { width: 2.5 },
         itemStyle: definition.type === "bar" || definition.type === "histogram" ? { borderRadius: [4, 4, 0, 0], opacity: .92 } : { borderWidth: 2 },
         emphasis: { focus: "series", scale: true },
-        endLabel: !isScatter && chartType === "line" && dataset.series.length === 1 ? { show: true, color: colors[0], fontSize: 10, fontWeight: 700, formatter: (params: { value?: unknown }) => formatAxisValue(params.value) } : undefined,
+        endLabel: !isScatter && chartType === "line" && dataset.series.length === 1 ? { show: true, color: isLight ? lightColors[0] : colors[0], fontSize: 10, fontWeight: 700, formatter: (params: { value?: unknown }) => formatAxisValue(params.value) } : undefined,
         large: isScatter && rows.length > 2000,
         largeThreshold: 2000,
         markLine: rule ? {
           silent: true,
           symbol: "none",
-          label: { show: true, color: "#c0c9d5", fontSize: 10, backgroundColor: "#151c25", padding: [3, 5], borderRadius: 3, formatter: "{b}: {c}" },
+          label: { show: true, color: isLight ? "#536471" : "#c0c9d5", fontSize: 10, backgroundColor: isLight ? "#f3f6f8" : "#151c25", padding: [3, 5], borderRadius: 3, formatter: "{b}: {c}" },
           lineStyle: { color: "#8e9bad", width: 1.2, type: "dashed" },
           data: [
             ...(rule.lower != null ? [{ name: "minimum", yAxis: rule.lower }] : []),
@@ -144,13 +148,13 @@ export function ChartRenderer({ rows, columns, definition, height = 270, syncedX
             symbol: "triangle",
             symbolRotate: violation.status === "below" ? 180 : 0,
             symbolSize: 10,
-            itemStyle: { color: violation.status === "below" ? "#9b7cff" : "#f5b85b", borderColor: "#0d1117", borderWidth: 1 },
+            itemStyle: { color: violation.status === "below" ? "#9b7cff" : "#f5b85b", borderColor: isLight ? "#ffffff" : "#0d1117", borderWidth: 1 },
           })),
         } : undefined,
       });}),
     };
     chart.setOption(option, { notMerge: true });
-  }, [dataset, definition, rows.length]);
+  }, [dataset, definition, rows.length, isLight]);
 
   useEffect(() => {
     const chart = chartRef.current;

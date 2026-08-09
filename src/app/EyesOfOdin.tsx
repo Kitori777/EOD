@@ -1,11 +1,14 @@
 "use client";
 
-import { ChangeEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { HomeView } from "./views/HomeView";
+import { APP_VERSION } from "./version";
 import { useI18n } from "./i18n/translations";
 import { SettingsDialog } from "./settings/SettingsDialog";
 import { useAppPreferences } from "./settings/preferences";
+import { calculateCanvasPan, clampWorkspacePanelSize, DEFAULT_WORKSPACE_SIZES, type Point, type WorkspacePanel } from "./layout/workspace-layout";
+import { LEGACY_WORKSPACE_KEY, loadWorkspace, saveWorkspace, WORKSPACE_MARKER_KEY, type WorkspaceSnapshot } from "./storage/workspace-storage";
 import { ChartStudio } from "../mechanics/charts/components/ChartStudio";
 import { applyTemplateToDataset, type DashboardGrid, type DashboardTemplate } from "../mechanics/charts/templates/dashboard-templates";
 import type { ChartDefinition, DataRow } from "../mechanics/charts/types/chart-types";
@@ -153,6 +156,36 @@ const initialCharts: ChartDefinition[] = [
   },
 ];
 
+function isMeaningfulLegacyWorkspace(raw: string | null): boolean {
+  if (!raw) return false;
+  try {
+    const saved = JSON.parse(raw) as Partial<WorkspaceSnapshot>;
+    const comparable = {
+      nodes: saved.nodes ?? [],
+      edges: saved.edges ?? [],
+      scenarios: saved.scenarios ?? [],
+      scenarioId: saved.scenarioId,
+      charts: saved.charts ?? [],
+      dashboardGrid: saved.dashboardGrid,
+      templates: saved.templates ?? [],
+      defaultTemplateId: saved.defaultTemplateId,
+    };
+    const demonstration = {
+      nodes: initialNodes,
+      edges: initialEdges,
+      scenarios: initialScenarios,
+      scenarioId: "growth",
+      charts: initialCharts,
+      dashboardGrid: 4,
+      templates: [],
+      defaultTemplateId: undefined,
+    };
+    return JSON.stringify(comparable) !== JSON.stringify(demonstration);
+  } catch {
+    return false;
+  }
+}
+
 const navItems: Array<{ id: ViewId; icon: string; label: string; shortcut: string }> = [
   { id: "model", icon: "◇", label: "Model", shortcut: "1" },
   { id: "data", icon: "▦", label: "Dane", shortcut: "2" },
@@ -258,26 +291,27 @@ export default function EyesOfOdin() {
   const parsedSample = useMemo(() => parseCsv(sampleCsv), []);
   const [homeOpen, setHomeOpen] = useState(true);
   const [hasSavedWorkspace, setHasSavedWorkspace] = useState(false);
+  const [workspaceActive, setWorkspaceActive] = useState(false);
   const [view, setView] = useState<ViewId>("model");
   const [bottomTab, setBottomTab] = useState<BottomTab>("results");
-  const [rows, setRows] = useState<DataRow[]>(parsedSample.rows);
-  const [headers, setHeaders] = useState<string[]>(parsedSample.headers);
-  const [datasetName, setDatasetName] = useState("sprzedaz_2026.csv");
-  const [datasetId, setDatasetId] = useState("sample-sales-2026");
-  const [datasetMeta, setDatasetMeta] = useState<DatasetMeta>({ id: "sample-sales-2026", name: "sprzedaz_2026.csv", format: "csv", headers: parsedSample.headers, totalRows: parsedSample.rows.length, fileSize: sampleCsv.length, importedAt: "1970-01-01T00:00:00.000Z", chunkCount: 1, sampled: false });
-  const [charts, setCharts] = useState<ChartDefinition[]>(initialCharts);
+  const [rows, setRows] = useState<DataRow[]>([]);
+  const [headers, setHeaders] = useState<string[]>([]);
+  const [datasetName, setDatasetName] = useState("Brak wczytanego pliku");
+  const [datasetId, setDatasetId] = useState("empty");
+  const [datasetMeta, setDatasetMeta] = useState<DatasetMeta>({ id: "empty", name: "Brak wczytanego pliku", format: "csv", headers: [], totalRows: 0, fileSize: 0, importedAt: "1970-01-01T00:00:00.000Z", chunkCount: 0, sampled: false });
+  const [charts, setCharts] = useState<ChartDefinition[]>([]);
   const [dashboardGrid, setDashboardGrid] = useState<DashboardGrid>(4);
   const [templates, setTemplates] = useState<DashboardTemplate[]>([]);
   const [defaultTemplateId, setDefaultTemplateId] = useState<string>();
-  const [nodes, setNodes] = useState<ModelNode[]>(initialNodes);
-  const [edges, setEdges] = useState<ModelEdge[]>(initialEdges);
+  const [nodes, setNodes] = useState<ModelNode[]>([]);
+  const [edges, setEdges] = useState<ModelEdge[]>([]);
   const [scenarios, setScenarios] = useState<Scenario[]>(initialScenarios);
-  const [scenarioId, setScenarioId] = useState("growth");
-  const [selectedNodeId, setSelectedNodeId] = useState("campaign");
+  const [scenarioId, setScenarioId] = useState("baseline");
+  const [selectedNodeId, setSelectedNodeId] = useState("");
   const [zoom, setZoom] = useState(0.9);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
-  const [toast, setToast] = useState("Gotowy model demonstracyjny");
+  const [toast, setToast] = useState("");
   const [fileError, setFileError] = useState("");
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
   const [pendingWorkbook, setPendingWorkbook] = useState<{ file: File; sheets: string[] } | null>(null);
@@ -286,9 +320,15 @@ export default function EyesOfOdin() {
   const [showExplorer, setShowExplorer] = useState(true);
   const [showInspector, setShowInspector] = useState(false);
   const [bottomPanelMode, setBottomPanelMode] = useState<BottomPanelMode>("collapsed");
+  const [explorerWidth, setExplorerWidth] = useState<number>(DEFAULT_WORKSPACE_SIZES.explorerWidth);
+  const [inspectorWidth, setInspectorWidth] = useState<number>(DEFAULT_WORKSPACE_SIZES.inspectorWidth);
+  const [resultsHeight, setResultsHeight] = useState<number>(DEFAULT_WORKSPACE_SIZES.resultsHeight);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [drag, setDrag] = useState<{ id: string; startX: number; startY: number; x: number; y: number } | null>(null);
+  const [canvasPan, setCanvasPan] = useState<Point>({ x: 0, y: 0 });
+  const [panDrag, setPanDrag] = useState<{ pointerId: number; start: Point; origin: Point } | null>(null);
+  const panelResizeRef = useRef<{ panel: WorkspacePanel; pointerId: number; start: number; size: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const chartFileRef = useRef<HTMLInputElement>(null);
   const importControllerRef = useRef<AbortController | null>(null);
@@ -301,30 +341,11 @@ export default function EyesOfOdin() {
 
   const metrics = useMemo(() => calculateScenario(scenario, rows, headers), [scenario, rows, headers]);
   const baselineMetrics = useMemo(() => calculateScenario(baselineScenario, rows, headers), [baselineScenario, rows, headers]);
+  const hasDataset = datasetId !== "empty" && headers.length > 0;
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("eyes-of-odin-workspace-v1");
-      if (!saved) return;
-      setHasSavedWorkspace(true);
-      const state = JSON.parse(saved) as { nodes?: ModelNode[]; edges?: ModelEdge[]; scenarios?: Scenario[]; scenarioId?: string; charts?: ChartDefinition[]; dashboardGrid?: DashboardGrid; templates?: DashboardTemplate[]; defaultTemplateId?: string };
-      if (state.nodes?.length) {
-        const restoredEdges = state.edges?.length ? state.edges : initialEdges;
-        const restoredNodes = hasNodeCollisions(state.nodes) ? layoutModelGraph(state.nodes, restoredEdges) : state.nodes;
-        setNodes(restoredNodes);
-        if (restoredNodes !== state.nodes) setToast("Uporządkowano nakładające się elementy");
-      }
-      if (state.edges?.length) setEdges(state.edges);
-      if (state.scenarios?.length) setScenarios(state.scenarios);
-      if (state.scenarioId) setScenarioId(state.scenarioId);
-      if (state.charts?.length) setCharts(state.charts.map((chart) => ({ ...chart, thresholds: chart.thresholds ?? [] })));
-      if (state.dashboardGrid) setDashboardGrid(state.dashboardGrid);
-      if (state.templates) setTemplates(state.templates.map((template) => ({ ...template, charts: template.charts.map((chart) => ({ ...chart, thresholds: chart.thresholds ?? [] })) })));
-      if (state.defaultTemplateId) setDefaultTemplateId(state.defaultTemplateId);
-      setToast("Przywrócono ostatnią sesję");
-    } catch {
-      setToast("Uruchomiono bez zapisanej sesji");
-    }
+    const hasModernSave = localStorage.getItem(WORKSPACE_MARKER_KEY) !== null;
+    setHasSavedWorkspace(hasModernSave || isMeaningfulLegacyWorkspace(localStorage.getItem(LEGACY_WORKSPACE_KEY)));
   }, []);
 
   useEffect(() => {
@@ -333,23 +354,55 @@ export default function EyesOfOdin() {
         showExplorer?: boolean;
         showInspector?: boolean;
         bottomPanelMode?: BottomPanelMode;
+        explorerWidth?: number;
+        inspectorWidth?: number;
+        resultsHeight?: number;
       };
       if (typeof saved.showExplorer === "boolean") setShowExplorer(saved.showExplorer);
       if (typeof saved.showInspector === "boolean") setShowInspector(saved.showInspector);
       if (["collapsed", "normal", "maximized"].includes(saved.bottomPanelMode ?? "")) setBottomPanelMode(saved.bottomPanelMode ?? "collapsed");
+      if (typeof saved.explorerWidth === "number" && Number.isFinite(saved.explorerWidth)) setExplorerWidth(clampWorkspacePanelSize("explorer", saved.explorerWidth));
+      if (typeof saved.inspectorWidth === "number" && Number.isFinite(saved.inspectorWidth)) setInspectorWidth(clampWorkspacePanelSize("inspector", saved.inspectorWidth));
+      if (typeof saved.resultsHeight === "number" && Number.isFinite(saved.resultsHeight)) setResultsHeight(clampWorkspacePanelSize("results", saved.resultsHeight, window.innerHeight));
     } catch {
       localStorage.removeItem("eyes-of-odin-ui-v1");
     }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("eyes-of-odin-workspace-v1", JSON.stringify({ nodes, edges, scenarios, scenarioId, charts, dashboardGrid, templates, defaultTemplateId }));
-    setHasSavedWorkspace(true);
-  }, [nodes, edges, scenarios, scenarioId, charts, dashboardGrid, templates, defaultTemplateId]);
+    if (!workspaceActive) return;
+    const snapshot: WorkspaceSnapshot = {
+      version: 2,
+      rows,
+      headers,
+      datasetName,
+      datasetId,
+      datasetMeta,
+      charts,
+      dashboardGrid,
+      templates,
+      defaultTemplateId,
+      nodes,
+      edges,
+      scenarios,
+      scenarioId,
+      selectedNodeId,
+      view,
+      zoom,
+      canvasPan,
+    };
+    const timer = window.setTimeout(() => {
+      void saveWorkspace(snapshot).then(() => {
+        localStorage.removeItem(LEGACY_WORKSPACE_KEY);
+        setHasSavedWorkspace(true);
+      }).catch(() => setToast("Nie udało się zapisać projektu lokalnie"));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [workspaceActive, rows, headers, datasetName, datasetId, datasetMeta, charts, dashboardGrid, templates, defaultTemplateId, nodes, edges, scenarios, scenarioId, selectedNodeId, view, zoom, canvasPan]);
 
   useEffect(() => {
-    localStorage.setItem("eyes-of-odin-ui-v1", JSON.stringify({ showExplorer, showInspector, bottomPanelMode }));
-  }, [showExplorer, showInspector, bottomPanelMode]);
+    localStorage.setItem("eyes-of-odin-ui-v1", JSON.stringify({ showExplorer, showInspector, bottomPanelMode, explorerWidth, inspectorWidth, resultsHeight }));
+  }, [showExplorer, showInspector, bottomPanelMode, explorerWidth, inspectorWidth, resultsHeight]);
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -380,6 +433,96 @@ export default function EyesOfOdin() {
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
+  const applyWorkspaceSnapshot = (snapshot: WorkspaceSnapshot) => {
+    const restoredEdges = snapshot.edges ?? [];
+    const restoredNodes = hasNodeCollisions(snapshot.nodes) ? layoutModelGraph(snapshot.nodes, restoredEdges) : snapshot.nodes;
+    const restoredScenarios = snapshot.scenarios.length ? snapshot.scenarios : initialScenarios;
+    setRows(snapshot.rows);
+    setHeaders(snapshot.headers);
+    setDatasetName(snapshot.datasetName);
+    setDatasetId(snapshot.datasetId);
+    setDatasetMeta(snapshot.datasetMeta);
+    setCharts(snapshot.charts.map((chart) => ({ ...chart, thresholds: chart.thresholds ?? [] })));
+    setDashboardGrid(snapshot.dashboardGrid);
+    setTemplates(snapshot.templates.map((template) => ({ ...template, charts: template.charts.map((chart) => ({ ...chart, thresholds: chart.thresholds ?? [] })) })));
+    setDefaultTemplateId(snapshot.defaultTemplateId);
+    setNodes(restoredNodes);
+    setEdges(restoredEdges);
+    setScenarios(restoredScenarios);
+    setScenarioId(restoredScenarios.some((item) => item.id === snapshot.scenarioId) ? snapshot.scenarioId : restoredScenarios[0].id);
+    setSelectedNodeId(restoredNodes.some((node) => node.id === snapshot.selectedNodeId) ? snapshot.selectedNodeId : restoredNodes[0]?.id ?? "");
+    setView(snapshot.view);
+    setZoom(snapshot.zoom);
+    setCanvasPan(snapshot.canvasPan);
+    setWorkspaceActive(true);
+    setHomeOpen(false);
+    setToast(restoredNodes !== snapshot.nodes ? "Przywrócono sesję i uporządkowano model" : "Przywrócono ostatnią sesję");
+  };
+
+  const resumeWorkspace = async () => {
+    try {
+      const saved = await loadWorkspace();
+      if (saved?.version === 2) {
+        applyWorkspaceSnapshot(saved);
+        return;
+      }
+
+      const legacyRaw = localStorage.getItem(LEGACY_WORKSPACE_KEY);
+      if (!legacyRaw || !isMeaningfulLegacyWorkspace(legacyRaw)) {
+        setHasSavedWorkspace(false);
+        setToast("Nie znaleziono zapisanej sesji");
+        return;
+      }
+      const legacy = JSON.parse(legacyRaw) as Partial<WorkspaceSnapshot>;
+      const legacyRows = parsedSample.rows;
+      const legacyHeaders = parsedSample.headers;
+      applyWorkspaceSnapshot({
+        version: 2,
+        rows: legacyRows,
+        headers: legacyHeaders,
+        datasetName: "sprzedaz_2026.csv",
+        datasetId: "sample-sales-2026",
+        datasetMeta: { id: "sample-sales-2026", name: "sprzedaz_2026.csv", format: "csv", headers: legacyHeaders, totalRows: legacyRows.length, fileSize: sampleCsv.length, importedAt: "1970-01-01T00:00:00.000Z", chunkCount: 1, sampled: false },
+        charts: legacy.charts ?? initialCharts,
+        dashboardGrid: legacy.dashboardGrid ?? 4,
+        templates: legacy.templates ?? [],
+        defaultTemplateId: legacy.defaultTemplateId,
+        nodes: legacy.nodes ?? initialNodes,
+        edges: legacy.edges ?? initialEdges,
+        scenarios: legacy.scenarios ?? initialScenarios,
+        scenarioId: legacy.scenarioId ?? "growth",
+        selectedNodeId: legacy.selectedNodeId ?? "campaign",
+        view: legacy.view ?? "model",
+        zoom: legacy.zoom ?? 0.9,
+        canvasPan: legacy.canvasPan ?? { x: 0, y: 0 },
+      });
+    } catch {
+      setToast("Nie udało się przywrócić zapisanej sesji");
+    }
+  };
+
+  const startEmptyWorkspace = () => {
+    setRows([]);
+    setHeaders([]);
+    setDatasetName("Brak wczytanego pliku");
+    setDatasetId("empty");
+    setDatasetMeta({ id: "empty", name: "Brak wczytanego pliku", format: "csv", headers: [], totalRows: 0, fileSize: 0, importedAt: "1970-01-01T00:00:00.000Z", chunkCount: 0, sampled: false });
+    setCharts([]);
+    setDashboardGrid(4);
+    setNodes([]);
+    setEdges([]);
+    setScenarios(initialScenarios);
+    setScenarioId("baseline");
+    setSelectedNodeId("");
+    setView("model");
+    setZoom(0.9);
+    setCanvasPan({ x: 0, y: 0 });
+    setBottomPanelMode("collapsed");
+    setWorkspaceActive(false);
+    setToast("");
+    setHomeOpen(false);
+  };
+
   const cancelImport = () => {
     if (!importControllerRef.current || importCancelling) return;
     setImportCancelling(true);
@@ -398,6 +541,7 @@ export default function EyesOfOdin() {
   };
 
   const performImport = async (file: File, sheetName?: string) => {
+    const importingFromHome = homeOpen;
     setFileError("");
     importControllerRef.current?.abort();
     const controller = new AbortController();
@@ -424,9 +568,21 @@ export default function EyesOfOdin() {
         setCharts(nextCharts);
         setDashboardGrid(nextCharts.length > 1 ? 4 : 1);
       }
-      setNodes((current) => current.map((node) => node.id === "source"
-        ? { ...node, title: file.name, subtitle: `${imported.meta.totalRows} wierszy · ${imported.meta.headers.length} kolumn` }
-        : node));
+      setNodes((current) => {
+        if (importingFromHome) return [{ id: "source", kind: "source", title: file.name, subtitle: `${imported.meta.totalRows} wierszy · ${imported.meta.headers.length} kolumn`, x: 120, y: 190 }];
+        const source = current.find((node) => node.id === "source");
+        if (!source) return [{ id: "source", kind: "source", title: file.name, subtitle: `${imported.meta.totalRows} wierszy · ${imported.meta.headers.length} kolumn`, x: 120, y: 190 }];
+        return current.map((node) => node.id === "source"
+          ? { ...node, title: file.name, subtitle: `${imported.meta.totalRows} wierszy · ${imported.meta.headers.length} kolumn` }
+          : node);
+      });
+      if (importingFromHome) {
+        setEdges([]);
+        setScenarios(initialScenarios);
+        setScenarioId("baseline");
+      }
+      setSelectedNodeId("source");
+      setWorkspaceActive(true);
       setToast(`Wczytano ${imported.meta.totalRows.toLocaleString("pl-PL")} rekordów${imported.meta.sampled ? " · wykresy używają próbki" : ""}`);
       setView("charts");
       setHomeOpen(false);
@@ -483,7 +639,7 @@ export default function EyesOfOdin() {
   const addNode = (kind: NodeKind) => {
     const anchor = selectedNode ?? nodes[nodes.length - 1];
     const id = `${kind}-${Date.now()}`;
-    const position = findVacantNodePosition(nodes, anchor, preferences.snapToGrid);
+    const position = anchor ? findVacantNodePosition(nodes, anchor, preferences.snapToGrid) : { x: 120, y: 190 };
     const next: ModelNode = {
       id,
       kind,
@@ -492,8 +648,9 @@ export default function EyesOfOdin() {
       ...position,
     };
     setNodes((current) => [...current, next]);
-    setEdges((current) => [...current, { id: `edge-${Date.now()}`, from: anchor.id, to: id }]);
+    if (anchor) setEdges((current) => [...current, { id: `edge-${Date.now()}`, from: anchor.id, to: id }]);
     setSelectedNodeId(id);
+    setWorkspaceActive(true);
     setToast(`${kindMeta[kind].label} dodana do modelu`);
   };
 
@@ -506,18 +663,66 @@ export default function EyesOfOdin() {
   };
 
   const handlePointerDown = (event: ReactPointerEvent, node: ModelNode) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
     setSelectedNodeId(node.id);
     setDrag({ id: node.id, startX: event.clientX, startY: event.clientY, x: node.x, y: node.y });
   };
 
+  const handleCanvasPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    if ((event.target as HTMLElement).closest(".model-node, .canvas-controls, .mini-map")) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setPanDrag({
+      pointerId: event.pointerId,
+      start: { x: event.clientX, y: event.clientY },
+      origin: canvasPan,
+    });
+  };
+
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!drag) return;
-    const dx = (event.clientX - drag.startX) / zoom;
-    const dy = (event.clientY - drag.startY) / zoom;
-    setNodes((current) => current.map((node) => node.id === drag.id
-      ? { ...node, x: preferences.snapToGrid ? snapModelCoordinate(Math.max(10, drag.x + dx)) : Math.max(10, drag.x + dx), y: preferences.snapToGrid ? snapModelCoordinate(Math.max(10, drag.y + dy)) : Math.max(10, drag.y + dy) }
-      : node));
+    if (drag) {
+      const dx = (event.clientX - drag.startX) / zoom;
+      const dy = (event.clientY - drag.startY) / zoom;
+      setNodes((current) => current.map((node) => node.id === drag.id
+        ? { ...node, x: preferences.snapToGrid ? snapModelCoordinate(Math.max(10, drag.x + dx)) : Math.max(10, drag.x + dx), y: preferences.snapToGrid ? snapModelCoordinate(Math.max(10, drag.y + dy)) : Math.max(10, drag.y + dy) }
+        : node));
+      return;
+    }
+    if (panDrag?.pointerId === event.pointerId) {
+      setCanvasPan(calculateCanvasPan(panDrag.origin, panDrag.start, { x: event.clientX, y: event.clientY }));
+    }
+  };
+
+  const stopCanvasDrag = () => {
+    setDrag(null);
+    setPanDrag(null);
+  };
+
+  const startPanelResize = (event: ReactPointerEvent<HTMLDivElement>, panel: WorkspacePanel) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const start = panel === "results" ? event.clientY : event.clientX;
+    const size = panel === "explorer" ? explorerWidth : panel === "inspector" ? inspectorWidth : resultsHeight;
+    if (panel === "results") setBottomPanelMode("normal");
+    panelResizeRef.current = { panel, pointerId: event.pointerId, start, size };
+  };
+
+  const handlePanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const resize = panelResizeRef.current;
+    if (!resize || resize.pointerId !== event.pointerId) return;
+    const current = resize.panel === "results" ? event.clientY : event.clientX;
+    const direction = resize.panel === "explorer" ? 1 : -1;
+    const nextSize = clampWorkspacePanelSize(resize.panel, resize.size + (current - resize.start) * direction, window.innerHeight);
+    if (resize.panel === "explorer") setExplorerWidth(nextSize);
+    else if (resize.panel === "inspector") setInspectorWidth(nextSize);
+    else setResultsHeight(nextSize);
+  };
+
+  const stopPanelResize = () => {
+    panelResizeRef.current = null;
   };
 
   const arrangeModel = () => {
@@ -531,6 +736,7 @@ export default function EyesOfOdin() {
     if (!shell) return;
     const bounds = getGraphBounds(nodes);
     const nextZoom = Math.min(1.08, Math.max(0.45, Math.min((shell.clientWidth - 80) / Math.max(bounds.maxX + 80, 1), (shell.clientHeight - 70) / Math.max(bounds.maxY + 80, 1))));
+    setCanvasPan({ x: 0, y: 0 });
     setZoom(Number(nextZoom.toFixed(2)));
   };
 
@@ -543,6 +749,7 @@ export default function EyesOfOdin() {
   };
 
   const changeSelectedTitle = (title: string) => {
+    if (!selectedNode) return;
     setNodes((current) => current.map((node) => node.id === selectedNode.id ? { ...node, title } : node));
   };
 
@@ -579,9 +786,9 @@ export default function EyesOfOdin() {
   };
 
   const renderModel = () => (
-    <div className="canvas-shell" ref={canvasRef} onPointerMove={handlePointerMove} onPointerUp={() => setDrag(null)} onPointerCancel={() => setDrag(null)}>
+    <div className={`canvas-shell ${panDrag ? "panning" : ""}`} ref={canvasRef} onPointerDown={handleCanvasPointerDown} onPointerMove={handlePointerMove} onPointerUp={stopCanvasDrag} onPointerCancel={stopCanvasDrag}>
       <div className="canvas-dots" />
-      <div className="canvas-stage" style={{ width: Math.max(1120, getGraphBounds(nodes).maxX + 100), height: Math.max(600, getGraphBounds(nodes).maxY + 100), transform: `scale(${zoom})` }}>
+      <div className="canvas-stage" style={{ width: Math.max(1120, getGraphBounds(nodes).maxX + 100), height: Math.max(600, getGraphBounds(nodes).maxY + 100), transform: `translate3d(${canvasPan.x}px, ${canvasPan.y}px, 0) scale(${zoom})` }}>
         {edges.map(renderEdge)}
         {nodes.map((node) => (
           <button
@@ -599,6 +806,7 @@ export default function EyesOfOdin() {
           </button>
         ))}
       </div>
+      {!nodes.length && <div className="empty-workspace-state"><span>▦</span><strong>Pusty projekt</strong><p>Wczytaj plik danych, aby utworzyć źródło, model i pierwsze wykresy.</p><button className="primary-button" onClick={() => chartFileRef.current?.click()}>Wczytaj plik danych</button></div>}
       <div className="canvas-controls">
         <button onClick={() => setZoom((value) => Math.min(1.2, value + 0.1))} aria-label="Powiększ">+</button>
         <span>{Math.round(zoom * 100)}%</span>
@@ -616,11 +824,11 @@ export default function EyesOfOdin() {
       <div className="view-heading">
         <div>
           <span className="eyebrow">DATA STUDIO</span>
-          <h2>{datasetName}</h2>
-          <p>{datasetMeta.totalRows.toLocaleString("pl-PL")} wierszy · {headers.length} kolumn · dane przetwarzane lokalnie</p>
+          <h2>{hasDataset ? datasetName : "Brak wczytanych danych"}</h2>
+          <p>{hasDataset ? `${datasetMeta.totalRows.toLocaleString("pl-PL")} wierszy · ${headers.length} kolumn · dane przetwarzane lokalnie` : "Wczytaj plik, aby zobaczyć podgląd i jakość danych."}</p>
         </div>
         <div className="view-heading-actions">
-          <button className="secondary-button" onClick={() => setView("charts")}>Twórz wykresy</button>
+          <button className="secondary-button" disabled={!hasDataset} onClick={() => setView("charts")}>Twórz wykresy</button>
           <label className="primary-button file-button">
             Wczytaj plik danych
             <input type="file" accept={DATA_FILE_ACCEPT} onChange={handleFile} />
@@ -628,6 +836,7 @@ export default function EyesOfOdin() {
         </div>
       </div>
       {fileError && <div className="error-banner">{fileError}</div>}
+      {!hasDataset ? <div className="empty-data-state"><span>▦</span><strong>Tu pojawią się Twoje dane</strong><p>Aplikacja nie ładuje już żadnych przykładowych rekordów. Wybierz własny plik, aby rozpocząć.</p><label className="primary-button file-button">Wczytaj plik danych<input type="file" accept={DATA_FILE_ACCEPT} onChange={handleFile} /></label></div> : <>
       <div className="quality-grid">
         <article><span>Kompletność</span><strong>{Math.round((profiles.reduce((sum, item) => sum + item.filled, 0) / Math.max(1, rows.length * headers.length)) * 100)}%</strong><small>uzupełnionych pól</small></article>
         <article><span>Kolumny liczbowe</span><strong>{profiles.filter((item) => item.type === "number").length}</strong><small>gotowe do obliczeń</small></article>
@@ -642,7 +851,12 @@ export default function EyesOfOdin() {
           </table>
         </div>
       </div>
+      </>}
     </div>
+  );
+
+  const renderDataRequired = (title: string, description: string) => (
+    <div className="data-required-view"><span>▦</span><strong>{title}</strong><p>{description}</p><button className="primary-button" onClick={() => chartFileRef.current?.click()}>Wczytaj plik danych</button></div>
   );
 
   const renderPaths = () => (
@@ -724,8 +938,8 @@ export default function EyesOfOdin() {
   };
 
   const explorerVisible = view !== "charts" && showExplorer;
-  const inspectorVisible = view === "model" && showInspector;
-  const bottomVisible = view !== "charts" && bottomPanelMode !== "collapsed";
+  const inspectorVisible = view === "model" && showInspector && Boolean(selectedNode);
+  const bottomVisible = hasDataset && view !== "charts" && bottomPanelMode !== "collapsed";
   const gridClasses = [
     "main-grid",
     view === "charts" ? "charts-mode focus-mode" : "",
@@ -753,14 +967,10 @@ export default function EyesOfOdin() {
       <main className="home-shell">
         <input ref={chartFileRef} className="global-file-input" type="file" accept={DATA_FILE_ACCEPT} onChange={handleFile} />
         <HomeView
-          datasetName={datasetName}
-          totalRows={datasetMeta.totalRows}
-          chartCount={charts.length}
           hasSavedWorkspace={hasSavedWorkspace}
           onOpenFile={() => chartFileRef.current?.click()}
-          onResume={() => setHomeOpen(false)}
-          onOpenSample={() => { setView("charts"); setHomeOpen(false); }}
-          onOpenModel={() => { setView("model"); setHomeOpen(false); }}
+          onResume={() => void resumeWorkspace()}
+          onStartEmpty={startEmptyWorkspace}
         />
         {fileError && <div className="home-error"><span>!</span>{fileError}<button onClick={() => setFileError("")}>×</button></div>}
         {renderImportProgress()}
@@ -774,9 +984,9 @@ export default function EyesOfOdin() {
       <input ref={chartFileRef} className="global-file-input" type="file" accept={DATA_FILE_ACCEPT} onChange={handleFile} />
       <header className="topbar">
         <button className="brand brand-button" onClick={() => setHomeOpen(true)} title="Wróć do strony głównej"><span className="brand-mark"><i /><i /><i /></span><strong>EYES OF ODIN</strong><small>SCENARIO STUDIO</small></button>
-        <div className="project-breadcrumb"><span>{preferences.language === "en" ? "Projects" : "Projekty"}</span><i>/</i><strong>{preferences.language === "en" ? "Sales growth model" : "Model wzrostu sprzedaży"}</strong><span className="saved-dot">● {t("saved")}</span></div>
+        <div className="project-breadcrumb"><span>{preferences.language === "en" ? "Projects" : "Projekty"}</span><i>/</i><strong>{workspaceActive ? (preferences.language === "en" ? "Sales growth model" : "Model wzrostu sprzedaży") : (preferences.language === "en" ? "New project" : "Nowy projekt")}</strong><span className="saved-dot">{workspaceActive ? `● ${t("saved")}` : (preferences.language === "en" ? "empty" : "pusty")}</span></div>
         <button className="command-trigger" onClick={() => setCommandOpen(true)}><span>⌕</span> {t("search")} <kbd>Ctrl K</kbd></button>
-        <div className="top-actions"><button aria-label="Notifications" title="Notifications" onClick={() => setToast(preferences.language === "en" ? "No new notifications" : "Brak nowych powiadomień")}>○</button><button className="run-button" onClick={() => { setBottomTab("results"); setBottomPanelMode("normal"); setToast(preferences.language === "en" ? "Model recalculated" : "Model przeliczony"); }}>▶ {t("run")}</button></div>
+        <div className="top-actions"><button aria-label="Notifications" title="Notifications" onClick={() => setToast(preferences.language === "en" ? "No new notifications" : "Brak nowych powiadomień")}>○</button><button className="run-button" disabled={!hasDataset} onClick={() => { setBottomTab("results"); setBottomPanelMode("normal"); setToast(preferences.language === "en" ? "Model recalculated" : "Model przeliczony"); }}>▶ {t("run")}</button></div>
       </header>
 
       <aside className="activity-bar">
@@ -789,18 +999,25 @@ export default function EyesOfOdin() {
 
       <section className="workbench">
         <div className="tabs-row">
-          <div className="document-tabs"><button className={view === "model" ? "active" : ""} onClick={() => setView("model")}><span className="tab-glyph">◇</span> model_wzrostu.odin</button><button className={view === "data" ? "active" : ""} onClick={() => setView("data")}><span className="csv-glyph">▦</span> {datasetName}</button><button className={view === "charts" ? "active" : ""} onClick={() => setView("charts")}><span className="chart-glyph">▥</span> pulpit_wykresów</button></div>
+          <div className="document-tabs"><button className={view === "model" ? "active" : ""} onClick={() => setView("model")}><span className="tab-glyph">◇</span> {workspaceActive ? "model_wzrostu.odin" : "nowy_projekt.odin"}</button>{hasDataset && <button className={view === "data" ? "active" : ""} onClick={() => setView("data")}><span className="csv-glyph">▦</span> {datasetName}</button>}{hasDataset && <button className={view === "charts" ? "active" : ""} onClick={() => setView("charts")}><span className="chart-glyph">▥</span> pulpit_wykresów</button>}</div>
           <div className="scenario-switcher"><span>SCENARIUSZ</span><select value={scenarioId} onChange={(event) => setScenarioId(event.target.value)}>{scenarios.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button onClick={createScenario} aria-label="Dodaj scenariusz">＋</button></div>
         </div>
 
-        <div className={gridClasses}>
+        <div
+          className={gridClasses}
+          style={{
+            "--explorer": `${explorerWidth}px`,
+            "--inspector": `${inspectorWidth}px`,
+            "--results": `${resultsHeight}px`,
+          } as CSSProperties}
+        >
           {explorerVisible && <aside className="explorer-panel">
             <div className="panel-title"><span>EKSPLORATOR</span><button aria-label="Ukryj eksplorator" title="Ukryj eksplorator (Ctrl+B)" onClick={() => setShowExplorer(false)}>×</button></div>
             <div className="project-tree">
               <div className="tree-project"><span>⌄</span><strong>MODEL WZROSTU</strong></div>
-              <button className={view === "data" ? "tree-active" : ""} onClick={() => setView("data")}><i className="tree-line" /><span className="csv-glyph">▦</span><span>{datasetName}</span><small>{datasetMeta.totalRows}</small></button>
+              {hasDataset && <button className={view === "data" ? "tree-active" : ""} onClick={() => setView("data")}><i className="tree-line" /><span className="csv-glyph">▦</span><span>{datasetName}</span><small>{datasetMeta.totalRows}</small></button>}
               <div className="tree-group"><span>⌄</span> Wizualizacje</div>
-              <button onClick={() => setView("charts")}><i className="tree-line" /><span className="chart-glyph">▥</span><span>Pulpit wykresów</span><small>{charts.length}</small></button>
+              {hasDataset ? <button onClick={() => setView("charts")}><i className="tree-line" /><span className="chart-glyph">▥</span><span>Pulpit wykresów</span><small>{charts.length}</small></button> : <div className="tree-empty">Brak danych i wykresów</div>}
               <div className="tree-group"><span>⌄</span> Modele</div>
               <button className={view === "model" ? "tree-active" : ""} onClick={() => setView("model")}><i className="tree-line" /><span>◇</span><span>Model wzrostu</span></button>
               <div className="tree-group"><span>⌄</span> Scenariusze</div>
@@ -812,20 +1029,21 @@ export default function EyesOfOdin() {
             </div>
             <label className="import-drop"><span>＋</span><strong>Dodaj dane</strong><small>13 formatów · do 2 GB</small><input type="file" accept={DATA_FILE_ACCEPT} onChange={handleFile} /></label>
           </aside>}
+          {explorerVisible && <div className="workspace-resizer explorer-resizer" role="separator" aria-label="Zmień szerokość eksploratora" aria-orientation="vertical" aria-valuenow={Math.round(explorerWidth)} onPointerDown={(event) => startPanelResize(event, "explorer")} onPointerMove={handlePanelResize} onPointerUp={stopPanelResize} onPointerCancel={stopPanelResize} />}
 
           <section className="center-stage">
             {view !== "charts" && <div className="stage-toolbar">
-              <div><button className={showExplorer ? "active" : ""} onClick={() => setShowExplorer((visible) => !visible)}>☰ {t("explorer")}</button>{view === "model" && <button className={showInspector ? "active" : ""} onClick={() => setShowInspector((visible) => !visible)}>☷ {t("inspector")}</button>}<button className={bottomPanelMode !== "collapsed" ? "active" : ""} onClick={() => setBottomPanelMode((mode) => mode === "collapsed" ? "normal" : "collapsed")}>▤ {t("resultsPanel")}</button><span />{view === "model" && <><button onClick={() => addNode("transform")}>＋ {t("block")}</button><button onClick={arrangeModel}>⌘ {t("arrange")}</button><button onClick={() => setToast(preferences.language === "en" ? "Select two elements to create a relation" : "Wybierz dwa elementy, aby utworzyć relację")}>⌁ {t("relation")}</button></>}</div>
-              <div className="model-health"><i /> Model gotowy <span>·</span> {nodes.length} bloków <span>·</span> {edges.length} relacji</div>
+              <div><button className={showExplorer ? "active" : ""} onClick={() => setShowExplorer((visible) => !visible)}>☰ {t("explorer")}</button>{view === "model" && <button className={showInspector ? "active" : ""} disabled={!selectedNode} onClick={() => setShowInspector((visible) => !visible)}>☷ {t("inspector")}</button>}<button className={bottomPanelMode !== "collapsed" ? "active" : ""} disabled={!hasDataset} onClick={() => setBottomPanelMode((mode) => mode === "collapsed" ? "normal" : "collapsed")}>▤ {t("resultsPanel")}</button><span />{view === "model" && <><button onClick={() => addNode("transform")}>＋ {t("block")}</button><button disabled={!nodes.length} onClick={arrangeModel}>⌘ {t("arrange")}</button><button disabled={nodes.length < 2} onClick={() => setToast(preferences.language === "en" ? "Select two elements to create a relation" : "Wybierz dwa elementy, aby utworzyć relację")}>⌁ {t("relation")}</button></>}</div>
+              <div className="model-health"><i /> {nodes.length ? "Model gotowy" : "Pusty model"} <span>·</span> {nodes.length} bloków <span>·</span> {edges.length} relacji</div>
             </div>}
             {view === "model" && renderModel()}
             {view === "data" && renderData()}
-            {view === "charts" && <ChartStudio key={datasetId} rows={rows} columns={profiles.map(({ name, type }) => ({ name, type }))} datasetId={datasetId} datasetName={datasetName} charts={charts} onChartsChange={setCharts} onImport={() => chartFileRef.current?.click()} onToast={setToast} sampled={datasetMeta.sampled} totalRows={datasetMeta.totalRows} grid={dashboardGrid} templates={templates} defaultTemplateId={defaultTemplateId} onGridChange={setDashboardGrid} onTemplatesChange={setTemplates} onDefaultTemplateChange={setDefaultTemplateId} />}
-            {view === "paths" && renderPaths()}
-            {view === "compare" && renderCompare()}
+            {view === "charts" && (hasDataset ? <ChartStudio key={datasetId} rows={rows} columns={profiles.map(({ name, type }) => ({ name, type }))} datasetId={datasetId} datasetName={datasetName} charts={charts} onChartsChange={setCharts} onImport={() => chartFileRef.current?.click()} onToast={setToast} sampled={datasetMeta.sampled} totalRows={datasetMeta.totalRows} grid={dashboardGrid} templates={templates} defaultTemplateId={defaultTemplateId} onGridChange={setDashboardGrid} onTemplatesChange={setTemplates} onDefaultTemplateChange={setDefaultTemplateId} /> : renderDataRequired("Brak wykresów", "Najpierw wczytaj plik danych."))}
+            {view === "paths" && (hasDataset ? renderPaths() : renderDataRequired("Brak ścieżek", "Ścieżki pojawią się po wczytaniu danych i zbudowaniu modelu."))}
+            {view === "compare" && (hasDataset ? renderCompare() : renderDataRequired("Brak porównania", "Wczytaj dane, aby porównywać scenariusze."))}
           </section>
 
-          {inspectorVisible && <aside className="inspector-panel">
+          {inspectorVisible && selectedNode && <aside className="inspector-panel">
             <div className="panel-title"><span>INSPEKTOR</span><button aria-label="Zamknij inspektor" onClick={() => setShowInspector(false)}>×</button></div>
             <div className="selected-summary"><span className={`large-node-icon node-${selectedNode.kind}`}>{kindMeta[selectedNode.kind].icon}</span><div><small>{kindMeta[selectedNode.kind].label.toUpperCase()}</small><strong>{selectedNode.title}</strong></div></div>
             <div className="inspector-section open"><div className="section-heading"><span>⌄</span><strong>Właściwości</strong></div><label>Nazwa<input value={selectedNode.title} onChange={(event) => changeSelectedTitle(event.target.value)} /></label><label>Opis<textarea value={selectedNode.subtitle} onChange={(event) => setNodes((current) => current.map((node) => node.id === selectedNode.id ? { ...node, subtitle: event.target.value } : node))} /></label></div>
@@ -838,6 +1056,7 @@ export default function EyesOfOdin() {
             <div className="inspector-section"><div className="section-heading"><span>›</span><strong>Połączenia</strong><small>{edges.filter((edge) => edge.from === selectedNode.id || edge.to === selectedNode.id).length}</small></div></div>
             {selectedNode.id !== "source" && <button className="danger-button" onClick={removeSelectedNode}>Usuń element</button>}
           </aside>}
+          {inspectorVisible && <div className="workspace-resizer inspector-resizer" role="separator" aria-label="Zmień szerokość inspektora" aria-orientation="vertical" aria-valuenow={Math.round(inspectorWidth)} onPointerDown={(event) => startPanelResize(event, "inspector")} onPointerMove={handlePanelResize} onPointerUp={stopPanelResize} onPointerCancel={stopPanelResize} />}
 
           {bottomVisible && <section className="bottom-panel">
             <div className="bottom-tabs">
@@ -855,18 +1074,19 @@ export default function EyesOfOdin() {
             {bottomTab === "data" && <div className="bottom-message"><strong>{datasetName}</strong><span>{datasetMeta.totalRows.toLocaleString("pl-PL")} wierszy · {headers.length} kolumn · {profiles.filter((item) => item.type === "number").length} pól liczbowych</span><button onClick={() => setView("data")}>Otwórz Data Studio</button></div>}
             {bottomTab === "issues" && <div className="bottom-message success"><strong>✓ Model nie zawiera problemów blokujących</strong><span>Wszystkie użyte pola są dostępne, a ścieżka ma wynik końcowy.</span></div>}
           </section>}
+          {bottomVisible && bottomPanelMode !== "maximized" && <div className="workspace-resizer results-resizer" role="separator" aria-label="Zmień wysokość panelu wyników" aria-orientation="horizontal" aria-valuenow={Math.round(resultsHeight)} onPointerDown={(event) => startPanelResize(event, "results")} onPointerMove={handlePanelResize} onPointerUp={stopPanelResize} onPointerCancel={stopPanelResize} />}
         </div>
       </section>
 
-      <footer className="statusbar"><div><span>◇ main</span><span>↻</span><span className="status-ok">✓ 0</span><span>△ 0</span></div><div><span>{datasetMeta.totalRows.toLocaleString(locale)} {preferences.language === "en" ? "records" : "rekordów"}</span><span>{preferences.language === "en" ? "local" : "lokalnie"}</span><span>{datasetMeta.format.toUpperCase()}</span><span>Eyes Engine 0.1.0</span><span className="status-live">● {t("ready")}</span></div></footer>
+      <footer className="statusbar"><div><span>◇ main</span><span>↻</span><span className="status-ok">✓ 0</span><span>△ 0</span></div><div><span>{datasetMeta.totalRows.toLocaleString(locale)} {preferences.language === "en" ? "records" : "rekordów"}</span><span>{preferences.language === "en" ? "local" : "lokalnie"}</span><span>{hasDataset ? datasetMeta.format.toUpperCase() : (preferences.language === "en" ? "NO DATA" : "BRAK DANYCH")}</span><span>Eyes Engine {APP_VERSION}</span><span className="status-live">● {t("ready")}</span></div></footer>
 
       {renderImportProgress()}
       {pendingWorkbook && <div className="sheet-picker-backdrop"><div className="sheet-picker"><span className="eyebrow">ARKUSZE PLIKU</span><h3>Wybierz arkusz do wczytania</h3><p>{pendingWorkbook.file.name}</p><div>{pendingWorkbook.sheets.map((sheet) => <button key={sheet} onClick={() => { const file = pendingWorkbook.file; setPendingWorkbook(null); void performImport(file, sheet); }}><span>▦</span><strong>{sheet}</strong><i>›</i></button>)}</div><button className="secondary-button" onClick={() => setPendingWorkbook(null)}>Anuluj</button></div></div>}
 
       {toast && <button className="toast" onClick={() => setToast("")}><span>✓</span>{toast}<i>×</i></button>}
       {commandOpen && <div className="command-backdrop" onMouseDown={() => setCommandOpen(false)}><div className="command-modal" onMouseDown={(event) => event.stopPropagation()}><div className="command-input"><span>⌕</span><input autoFocus value={commandQuery} onChange={(event) => setCommandQuery(event.target.value)} placeholder="Wpisz polecenie…" /><kbd>ESC</kbd></div><div className="command-list"><small>POLECENIA</small>{commands.map((command, index) => <button key={command.label} className={index === 0 ? "active" : ""} onClick={() => { command.action(); setCommandOpen(false); setCommandQuery(""); }}><span>›</span><strong>{command.label}</strong><small>{command.detail}</small></button>)}</div></div></div>}
-      <SettingsDialog open={settingsOpen} showExplorer={showExplorer} showInspector={showInspector} showResults={bottomPanelMode !== "collapsed"} onShowExplorer={setShowExplorer} onShowInspector={setShowInspector} onShowResults={(visible) => setBottomPanelMode(visible ? "normal" : "collapsed")} onClose={() => setSettingsOpen(false)} onRestoreLayout={() => { setShowExplorer(true); setShowInspector(false); setBottomPanelMode("collapsed"); }} />
-      {helpOpen && <div className="app-dialog-backdrop" onMouseDown={() => setHelpOpen(false)}><section className="app-dialog help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-title" onMouseDown={(event) => event.stopPropagation()}><header><div><span className="eyebrow">EYES OF ODIN 0.1.0</span><h2 id="help-title">Pomoc i informacje</h2></div><button aria-label="Zamknij pomoc" onClick={() => setHelpOpen(false)}>×</button></header><p>Lokalne studio wizualizacji, limitów i scenariuszy. Dane nie opuszczają komputera.</p><div className="shortcut-list"><div><kbd>Ctrl K</kbd><span>Paleta poleceń</span></div><div><kbd>Ctrl B</kbd><span>Eksplorator</span></div><div><kbd>Ctrl J</kbd><span>Panel wyników</span></div><div><kbd>Esc</kbd><span>Zamknij okno lub anuluj import</span></div></div><footer><button className="primary-button" onClick={() => setHelpOpen(false)}>Rozumiem</button></footer></section></div>}
+      <SettingsDialog open={settingsOpen} showExplorer={showExplorer} showInspector={showInspector} showResults={bottomPanelMode !== "collapsed"} onShowExplorer={setShowExplorer} onShowInspector={setShowInspector} onShowResults={(visible) => setBottomPanelMode(visible ? "normal" : "collapsed")} onClose={() => setSettingsOpen(false)} onRestoreLayout={() => { setShowExplorer(true); setShowInspector(false); setBottomPanelMode("collapsed"); setExplorerWidth(DEFAULT_WORKSPACE_SIZES.explorerWidth); setInspectorWidth(DEFAULT_WORKSPACE_SIZES.inspectorWidth); setResultsHeight(DEFAULT_WORKSPACE_SIZES.resultsHeight); setCanvasPan({ x: 0, y: 0 }); }} />
+      {helpOpen && <div className="app-dialog-backdrop" onMouseDown={() => setHelpOpen(false)}><section className="app-dialog help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-title" onMouseDown={(event) => event.stopPropagation()}><header><div><span className="eyebrow">EYES OF ODIN {APP_VERSION}</span><h2 id="help-title">Pomoc i informacje</h2></div><button aria-label="Zamknij pomoc" onClick={() => setHelpOpen(false)}>×</button></header><p>Lokalne studio wizualizacji, limitów i scenariuszy. Dane nie opuszczają komputera.</p><div className="shortcut-list"><div><kbd>Ctrl K</kbd><span>Paleta poleceń</span></div><div><kbd>Ctrl B</kbd><span>Eksplorator</span></div><div><kbd>Ctrl J</kbd><span>Panel wyników</span></div><div><kbd>Esc</kbd><span>Zamknij okno lub anuluj import</span></div></div><footer><button className="primary-button" onClick={() => setHelpOpen(false)}>Rozumiem</button></footer></section></div>}
     </main>
   );
 }

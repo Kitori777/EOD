@@ -1,16 +1,17 @@
+import { useI18n } from "../i18n/translations";
+import { APP_VERSION } from "../version";
+
 type Props = {
-  datasetName: string;
-  totalRows: number;
-  chartCount: number;
   hasSavedWorkspace: boolean;
   onOpenFile: () => void;
   onResume: () => void;
-  onOpenSample: () => void;
-  onOpenModel: () => void;
+  onStartEmpty: () => void;
 };
 
-export function HomeView({ datasetName, totalRows, chartCount, hasSavedWorkspace, onOpenFile, onResume, onOpenSample, onOpenModel }: Props) {
-  const { t, language, locale } = useI18n();
+export function HomeView({ hasSavedWorkspace, onOpenFile, onResume, onStartEmpty }: Props) {
+  const { t, language } = useI18n();
+  const english = language === "en";
+
   return (
     <section className="home-view">
       <header className="home-header">
@@ -18,49 +19,45 @@ export function HomeView({ datasetName, totalRows, chartCount, hasSavedWorkspace
           <span className="brand-mark"><i /><i /><i /></span>
           <div><strong>EYES OF ODIN</strong><small>LOCAL DATA STUDIO</small></div>
         </div>
-        <span className="home-version">0.1.0 · lokalnie</span>
+        <div className="home-header-meta"><span className="home-local-dot" />{english ? "Private by design" : "Dane zostają u Ciebie"}<span className="home-version">{APP_VERSION}</span></div>
       </header>
 
-      <div className="home-content">
+      <main className="home-content">
         <div className="home-hero">
           <span className="eyebrow">{t("homeTagline")}</span>
           <h1>{t("homeTitle")}<br /><em>{t("homeTitleAccent")}</em></h1>
           <p>{t("homeDescription")}</p>
           <div className="home-hero-actions">
-            <button className="home-primary" onClick={onOpenFile}><span>＋</span> {t("loadData")}</button>
-            <button className="home-secondary" onClick={onResume} disabled={!hasSavedWorkspace}>{t("resume")} <span>→</span></button>
+            <button className="home-primary" onClick={onOpenFile}><span>＋</span>{t("loadData")}</button>
+            {hasSavedWorkspace && <button className="home-secondary" onClick={onResume}>{t("resume")}<span>→</span></button>}
+            <button className="home-secondary home-empty-project" onClick={onStartEmpty}>{english ? "Empty project" : "Pusty projekt"}<span>→</span></button>
           </div>
-          <div className="home-trust"><span>✓ {t("dataFormats")}</span><span>✓ {t("localData")}</span><span>✓ {t("noAccount")}</span></div>
+          <div className="home-trust"><span>13 {english ? "formats" : "formatów"}</span><span>{english ? "local processing" : "obliczenia lokalne"}</span><span>{english ? "no account" : "bez konta"}</span></div>
         </div>
 
-        <div className="home-preview" aria-label="Podgląd możliwości aplikacji">
-          <div className="home-preview-top"><span>AKTYWNY PODGLĄD</span><strong>Wyniki w jednym miejscu</strong><i>● gotowy</i></div>
+        <aside className="home-preview" aria-label={english ? "Application preview" : "Podgląd możliwości aplikacji"}>
+          <div className="home-preview-top">
+            <span>{english ? "LIVE OVERVIEW" : "PODGLĄD NA ŻYWO"}</span>
+            <strong>{english ? "Results at a glance" : "Wyniki w jednym miejscu"}</strong>
+            <i><b />{english ? "ready" : "gotowy"}</i>
+          </div>
           <div className="home-preview-chart">
-            <div className="home-preview-metric"><span>Ostatnia wartość</span><strong>108,4</strong><small>+8,4% względem początku</small></div>
-            <svg viewBox="0 0 540 190" role="img" aria-label="Przykładowy wykres wartości i limitów">
-              <g className="preview-grid"><line x1="28" x2="520" y1="38" y2="38"/><line x1="28" x2="520" y1="92" y2="92"/><line x1="28" x2="520" y1="146" y2="146"/></g>
-              <rect x="28" y="53" width="492" height="79" className="preview-safe" />
-              <line x1="28" x2="520" y1="53" y2="53" className="preview-limit"/><line x1="28" x2="520" y1="132" y2="132" className="preview-limit"/>
-              <polyline points="28,124 72,118 116,121 160,104 204,108 248,88 292,93 336,76 380,82 424,60 468,68 520,42" className="preview-line"/>
-              <circle cx="520" cy="42" r="5" className="preview-point" />
+            <div className="home-preview-metric"><span>{english ? "Current value" : "Bieżąca wartość"}</span><strong>108,4</strong><small>↗ 8,4% {english ? "since start" : "od początku"}</small></div>
+            <div className="home-preview-range"><span>{english ? "SAFE RANGE" : "BEZPIECZNY ZAKRES"}</span><strong>90–110</strong></div>
+            <svg viewBox="0 0 600 214" role="img" aria-label={english ? "Sample value and limit chart" : "Przykładowy wykres wartości i limitów"}>
+              <defs><linearGradient id="previewArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#2fc8b5" stopOpacity=".24"/><stop offset="1" stopColor="#2fc8b5" stopOpacity="0"/></linearGradient></defs>
+              <g className="preview-grid"><line x1="26" x2="574" y1="45" y2="45"/><line x1="26" x2="574" y1="103" y2="103"/><line x1="26" x2="574" y1="161" y2="161"/></g>
+              <rect x="26" y="62" width="548" height="83" className="preview-safe" />
+              <line x1="26" x2="574" y1="62" y2="62" className="preview-limit"/><line x1="26" x2="574" y1="145" y2="145" className="preview-limit"/>
+              <path d="M26 147 L76 138 L126 143 L176 119 L226 126 L276 98 L326 106 L376 81 L426 91 L476 62 L526 74 L574 47 L574 190 L26 190 Z" className="preview-area" />
+              <polyline points="26,147 76,138 126,143 176,119 226,126 276,98 326,106 376,81 426,91 476,62 526,74 574,47" className="preview-line"/>
+              <circle cx="574" cy="47" r="6" className="preview-point" />
             </svg>
           </div>
-          <div className="home-preview-footer"><span><i className="dot-teal" /> trend</span><span><i className="dot-muted" /> bezpieczny zakres 90–110</span><strong>12 punktów</strong></div>
-        </div>
+          <div className="home-preview-footer"><span><i className="dot-teal" />{english ? "value trend" : "trend wartości"}</span><span><i className="dot-muted" />{english ? "configured limits" : "ustawione limity"}</span><strong>12 {english ? "points" : "punktów"}</strong></div>
+        </aside>
 
-        <div className="home-section-title"><div><span>ROZPOCZNIJ</span><strong>Wybierz sposób pracy</strong></div><small>W każdej chwili możesz przejść do innego widoku.</small></div>
-        <div className="home-actions-grid">
-          <button className="home-action-card featured" onClick={onOpenFile}><span className="home-action-icon">▦</span><div><strong>{language === "en" ? "Open your data" : "Otwórz własne dane"}</strong><p>{language === "en" ? "CSV, Excel, JSON, Parquet and 9 more formats." : "CSV, Excel, JSON, Parquet i 9 innych formatów."}</p></div><i>→</i></button>
-          <button className="home-action-card" onClick={onOpenSample}><span className="home-action-icon purple">▥</span><div><strong>{language === "en" ? "Try the sample" : "Wypróbuj przykład"}</strong><p>{language === "en" ? "A ready sales dashboard with two charts." : "Gotowy pulpit sprzedaży z dwoma wykresami."}</p></div><i>→</i></button>
-          <button className="home-action-card" onClick={onOpenModel}><span className="home-action-icon amber">◇</span><div><strong>{language === "en" ? "Build a scenario" : "Zbuduj scenariusz"}</strong><p>{language === "en" ? "Connect data, decisions and results in a what-if model." : "Połącz dane, decyzje i wyniki w model „co, jeśli”."}</p></div><i>→</i></button>
-        </div>
-
-        <div className="home-recent">
-          <div><span className="home-recent-icon">▦</span><div><small>{language === "en" ? "LAST WORKSPACE" : "OSTATNIA PRZESTRZEŃ"}</small><strong>{datasetName}</strong><p>{totalRows.toLocaleString(locale)} {language === "en" ? "records" : "rekordów"} · {chartCount} {language === "en" ? "charts" : "wykresy"} · {language === "en" ? "local save" : "zapis lokalny"}</p></div></div>
-          <button onClick={onResume}>{language === "en" ? "Open" : "Otwórz"} <span>→</span></button>
-        </div>
-      </div>
+      </main>
     </section>
   );
 }
-import { useI18n } from "../i18n/translations";

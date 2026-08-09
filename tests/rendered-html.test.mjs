@@ -31,8 +31,28 @@ test("source provides a calm home screen and an on-demand chart editor", async (
   assert.match(application, /homeOpen/);
   assert.match(home, /t\("loadData"\)/);
   assert.match(home, /t\("resume"\)/);
+  assert.match(home, /Pusty projekt/);
+  assert.doesNotMatch(home, /home-launchpad/);
   assert.match(studio, /chart-editor-drawer/);
   assert.match(studio, /chart-card-summary/);
+});
+
+test("new workspaces start empty while continue restores the full saved dataset", async () => {
+  const [application, storage] = await Promise.all([
+    readFile(new URL("../src/app/EyesOfOdin.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/storage/workspace-storage.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(application, /useState<DataRow\[]>\(\[\]\)/);
+  assert.match(application, /useState<ChartDefinition\[]>\(\[\]\)/);
+  assert.match(application, /useState<ModelNode\[]>\(\[\]\)/);
+  assert.match(application, /Pusty projekt/);
+  assert.match(application, /startEmptyWorkspace/);
+  assert.match(application, /onResume=\{\(\) => void resumeWorkspace\(\)\}/);
+  assert.match(application, /isMeaningfulLegacyWorkspace/);
+  assert.match(storage, /indexedDB\.open/);
+  assert.match(storage, /rows: DataRow\[]/);
+  assert.match(storage, /datasetMeta: DatasetMeta/);
+  assert.match(storage, /objectStore\(STORE_NAME\)\.put\(snapshot/);
 });
 
 test("settings provide persisted themes, accents, languages and workspace controls", async () => {
@@ -44,10 +64,12 @@ test("settings provide persisted themes, accents, languages and workspace contro
   ]);
   assert.match(settings, /appearance.*language.*workspace.*about/s);
   assert.match(settings, /Odin Dark/);
-  assert.match(preferences, /eyes-of-odin-preferences-v2/);
+  assert.match(preferences, /eyes-of-odin-preferences-v3/);
+  assert.match(preferences, /"aurora"/);
   assert.match(preferences, /reduceMotion/);
   assert.match(translations, /Application settings/);
   assert.match(styles, /data-theme="midnight"/);
+  assert.match(styles, /data-theme="aurora"/);
   assert.match(styles, /data-accent="violet"/);
 });
 
@@ -59,32 +81,43 @@ test("workspace panels are actionable and the chart view has no reserved empty r
   assert.match(application, /setShowExplorer/);
   assert.match(application, /setShowInspector/);
   assert.match(application, /setBottomPanelMode/);
+  assert.match(application, /handleCanvasPointerDown/);
+  assert.match(application, /calculateCanvasPan/);
+  assert.match(application, /workspace-resizer explorer-resizer/);
+  assert.match(application, /workspace-resizer inspector-resizer/);
+  assert.match(application, /workspace-resizer results-resizer/);
   assert.match(application, /if \(controller\.signal\.aborted\) throw new DOMException\("Import anulowany\."/);
   assert.match(application, /Pomoc i informacje/);
   assert.match(application, /Pobrano raport porównania/);
   assert.match(styles, /\.main-grid\.charts-mode \{ grid-template-rows: minmax\(0, 1fr\); \}/);
+  assert.match(styles, /\.dashboard-viewport\.dashboard-grid-4/);
+  assert.match(styles, /dashboard-count-2/);
+  assert.match(styles, /data-theme="aurora"\] \.quality-grid article/);
+  assert.match(styles, /grid-template-rows: minmax\(300px, 1fr\) var\(--results, 170px\)/);
   assert.doesNotMatch(styles, /\.main-grid\.charts-mode \{ grid-template-rows: minmax\(480px, 1fr\) 118px; \}/);
 });
 
-test("ships an offline Windows target as version 0.1.0", async () => {
-  const [desktopMain, desktopHtml, tauriConfig, cargoConfig, packageJson] = await Promise.all([
+test("ships an offline Windows target as version 0.1.1", async () => {
+  const [desktopMain, desktopHtml, tauriConfig, cargoConfig, packageJson, appVersion] = await Promise.all([
     readFile(new URL("../src/desktop/main.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/desktop/index.html", import.meta.url), "utf8"),
     readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
     readFile(new URL("../src-tauri/Cargo.toml", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/version.ts", import.meta.url), "utf8"),
   ]);
   const config = JSON.parse(tauriConfig);
   assert.match(desktopMain, /import EyesOfOdin from "\.\.\/app\/EyesOfOdin"/);
   assert.match(desktopHtml, /<div id="root"><\/div>/);
   assert.equal(config.productName, "Eyes of Odin");
-  assert.equal(config.version, "0.1.0");
-  assert.equal(JSON.parse(packageJson).version, "0.1.0");
+  assert.equal(config.version, "0.1.1");
+  assert.equal(JSON.parse(packageJson).version, "0.1.1");
   assert.equal(config.identifier, "com.eyesofodin.scenariostudio");
   assert.equal(config.build.frontendDist, "../desktop-dist");
   assert.deepEqual(config.bundle.targets, ["nsis"]);
   assert.equal(config.bundle.windows.nsis.installMode, "currentUser");
-  assert.match(cargoConfig, /version = "0.1.0"/);
+  assert.match(cargoConfig, /version = "0.1.1"/);
+  assert.match(appVersion, /APP_VERSION = "0.1.1"/);
   assert.match(cargoConfig, /tauri = \{ version = "2"/);
   await access(new URL("../src-tauri/icons/icon.ico", import.meta.url));
   await access(new URL("../src/mechanics/charts/components/ChartStudio.tsx", import.meta.url));

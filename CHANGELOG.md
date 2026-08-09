@@ -2,7 +2,36 @@
 
 Wszystkie istotne zmiany w Eyes of Odin są dokumentowane w tym pliku. Format jest zgodny z [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), a wersje używają [Semantic Versioning](https://semver.org/).
 
-## [0.1.0] — w przygotowaniu
+## [0.1.1] — 2026-08-09
+
+### Dodano
+
+- pełny jasny motyw Aurora obejmujący stronę główną, dane, model, wykresy, porównania, ścieżki i okna dialogowe,
+- przesuwanie pustego obszaru modelu lewym przyciskiem myszy bez blokowania przeciągania węzłów,
+- ręczne zmienianie szerokości Eksploratora i Inspektora oraz wysokości panelu wyników,
+- lokalne zapamiętywanie rozmiarów paneli,
+- osobny tryb „Pusty projekt” bez przykładowych danych, wykresów i bloków,
+- pełny zapis sesji w IndexedDB razem z danymi, wykresami, modelem, scenariuszami, aktywnym widokiem i położeniem płótna.
+
+### Zmieniono
+
+- uproszczono stronę startową i usunięto dolną sekcję szybkiego startu,
+- powiększono obszar wykresów; cztery wykresy wykorzystują układ 2 × 2 w obrębie jednego ekranu,
+- zmniejszono nagłówki i paski narzędzi pulpitu, aby przeznaczyć więcej miejsca na dane,
+- przycisk „Kontynuuj pracę” pojawia się tylko wtedy, gdy istnieje rzeczywista zapisana praca,
+- import ze strony startowej rozpoczyna nowy projekt, a nie modyfikuje po cichu poprzedniej sesji,
+- wspólny numer wersji interfejsu jest utrzymywany w jednym module.
+
+### Naprawiono
+
+- automatyczne pokazywanie `sprzedaz_2026.csv` w nowym projekcie,
+- nadpisywanie zapisu projektu demonstracyjnym stanem podczas samego uruchamiania aplikacji,
+- niepełne przywracanie sesji, które wcześniej pomijało wiersze i metadane wczytanego pliku,
+- ciemne kafle i kontrolki pozostające w jasnym motywie,
+- zbyt małą wysokość wykresów i konieczność przewijania pulpitu z czterema wykresami,
+- brak możliwości przesuwania rozbudowanego grafu lewym przyciskiem myszy.
+
+## [0.1.0] — 2026-08-09
 
 ### Dodano
 
