@@ -44,11 +44,11 @@ const pl = {
   localData: "dane lokalne",
   noAccount: "bez konta",
   start: "Start",
-  model: "Model",
+  model: "Model i symulacja",
   data: "Dane",
   charts: "Wykresy",
-  paths: "Ścieżki",
-  compare: "Porównaj",
+  paths: "Diagnostyka",
+  compare: "Co-jeśli",
   run: "Uruchom",
   search: "Szukaj lub uruchom polecenie",
   arrange: "Uporządkuj",
@@ -66,7 +66,7 @@ const en: Record<keyof typeof pl, string> = {
   inspector: "Inspector", inspectorDescription: "Properties of the active item", resultsPanel: "Results panel", resultsDescription: "Metrics, data and issues", snapGrid: "Snap blocks to grid", snapGridDescription: "Keeps the model even and readable",
   restoreDefaults: "Restore defaults", done: "Done", version: "Version", localFirst: "Your data stays on this computer", checkUpdates: "Check for updates", releaseDescription: "Download the newest installer from the official GitHub release.",
   homeTagline: "YOUR DATA. YOUR DECISIONS.", homeTitle: "See the change,", homeTitleAccent: "before you make it.", homeDescription: "Load data, set axes and limits, then compare multiple views without sending files to the cloud.",
-  loadData: "Load data", resume: "Resume work", dataFormats: "13 formats", localData: "local data", noAccount: "no account", start: "Start", model: "Model", data: "Data", charts: "Charts", paths: "Paths", compare: "Compare",
+  loadData: "Load data", resume: "Resume work", dataFormats: "13 formats", localData: "local data", noAccount: "no account", start: "Start", model: "Model & simulation", data: "Data", charts: "Charts", paths: "Diagnostics", compare: "What-if",
   run: "Run", search: "Search or run a command", arrange: "Arrange", block: "Block", relation: "Relation", saved: "saved", ready: "ready",
 };
 

@@ -17,6 +17,10 @@ function finalize(active: ActiveEvent, index: number): ThresholdEvent {
     minimum: Math.min(...violations.map((item) => item.value)),
     maximum: Math.max(...violations.map((item) => item.value)),
     largestDeviation: violations.reduce((largest, item) => Math.abs(item.deviation) > Math.abs(largest) ? item.deviation : largest, 0),
+    label: rule.label,
+    severity: rule.severity ?? "warning",
+    description: rule.description,
+    thresholdMode: rule.mode ?? "manual",
     violations,
   };
 }
@@ -46,8 +50,8 @@ export async function buildStoredRawThresholdReport(datasetId: string, definitio
         }
         evaluatedPoints += 1;
         let violation: ThresholdViolation | null = null;
-        if (rule.lower != null && value < rule.lower) violation = { x, value, status: "below", boundary: rule.lower, deviation: value - rule.lower };
-        else if (rule.upper != null && value > rule.upper) violation = { x, value, status: "above", boundary: rule.upper, deviation: value - rule.upper };
+        if (rule.lower != null && value <= rule.lower) violation = { x, value, status: "below", boundary: rule.lower, deviation: value - rule.lower };
+        else if (rule.upper != null && value >= rule.upper) violation = { x, value, status: "above", boundary: rule.upper, deviation: value - rule.upper };
         if (!violation) {
           flush(rule.id);
           return;

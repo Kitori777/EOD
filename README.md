@@ -3,7 +3,7 @@
   <h1>Eyes of Odin</h1>
   <p><strong>Lokalne studio wizualizacji danych, limitów i scenariuszy „co, jeśli…”.</strong></p>
   <p>
-    <img alt="Wersja 0.1.1" src="https://img.shields.io/badge/version-0.1.1-39d8c2" />
+    <img alt="Wersja 0.1.2" src="https://img.shields.io/badge/version-0.1.2-39d8c2" />
     <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-2d7dff" />
     <img alt="13 formatów danych" src="https://img.shields.io/badge/data-13%20formats-d7ff45" />
     <img alt="Local first" src="https://img.shields.io/badge/privacy-local--first-9aa6b8" />
@@ -37,7 +37,7 @@ irm https://raw.githubusercontent.com/Kitori777/EOD/main/scripts/install.ps1 | i
 
 Skrypt automatycznie rozpoznaje najnowsze wydanie, pobiera jego instalator, sprawdza sumę SHA-256 i instaluje aplikację dla bieżącego użytkownika. Ta sama komenda służy do pierwszej instalacji i aktualizacji.
 
-Po opublikowaniu taga `v0.1.1` GitHub automatycznie utworzy stronę wydania i dołączy instalator, wersję portable oraz zweryfikowane sumy SHA-256.
+Po opublikowaniu taga `v0.1.2` GitHub automatycznie utworzy stronę wydania i dołączy instalator, wersję portable oraz zweryfikowane sumy SHA-256.
 
 ## Aktualizacja do najnowszego builda
 
@@ -61,9 +61,9 @@ Aktualizator pobiera zawartość najnowszego wydania. Zapisana lokalnie przestrz
 - kilka wartości Y, serie, filtry, agregacje i porównanie różnic,
 - pulpity 1, 4, 9 lub własny układ wykresów,
 - eksport i import szablonów z dopasowaniem nazw kolumn,
-- dolne i górne limity kontrolne, np. 90–110,
-- raport dokładnych przekroczeń wraz z eksportem CSV,
-- wizualny model zależności i ścieżki decyzji, np. `1 → 4 → 9`,
+- ręczne limity oraz kreskowane linie percentylowe P75/P90/P95/P99,
+- raport całych zdarzeń przekroczeń wraz z czasem, poziomem alertu i eksportem CSV,
+- wykonywalny model `Źródło → Reguła → Wynik` z walidacją pól i połączeń,
 - lokalny zapis przestrzeni roboczej bez konta i chmury.
 
 ## Pierwsze użycie
@@ -76,7 +76,7 @@ Aktualizator pobiera zawartość najnowszego wydania. Zapisana lokalnie przestrz
 6. Dodaj kolejne wykresy, wybierz układ 1/4/9 i zapisz pulpit jako szablon.
 7. Otwórz raport limitów, aby zobaczyć dokładny początek i koniec każdego zdarzenia.
 
-Pełny opis ekranów i mechanik znajduje się w [GUIDE.md](GUIDE.md).
+Pełny opis ekranów i mechanik znajduje się w [GUIDE.md](GUIDE.md). Gotowy scenariusz pokazowy dla danych 5-minutowych opisuje [docs/DEMO-5-MINUTES.md](docs/DEMO-5-MINUTES.md).
 
 ## Gotowe dane demonstracyjne
 
@@ -130,8 +130,8 @@ Pełna mapa plików i przepływ danych są opisane w [GUIDE.md](GUIDE.md#archite
 
 ## Prywatność
 
-Eyes of Odin 0.1.1 nie wysyła importowanych danych do serwera. Pliki są odczytywane lokalnie, a pełna sesja projektu jest zapisywana na danym komputerze.
+Eyes of Odin 0.1.2 nie wysyła importowanych danych do serwera. Pliki są odczytywane lokalnie, a pełna sesja projektu jest zapisywana na danym komputerze.
 
 ## Status projektu
 
-Aktualna wersja to 0.1.1. Historia wszystkich zmian znajduje się w [CHANGELOG.md](CHANGELOG.md).
+Aktualna wersja to 0.1.2. Historia wszystkich zmian znajduje się w [CHANGELOG.md](CHANGELOG.md).

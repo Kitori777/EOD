@@ -8,7 +8,7 @@ on:
       version:
         description: "Wersja bez prefiksu v"
         required: true
-        default: "0.1.1"
+        default: "0.1.2"
 
 permissions:
   contents: write

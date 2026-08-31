@@ -10,6 +10,25 @@ import {
   workbookDataFile,
 } from "../src/mechanics/data/importers/format-registry.ts";
 import { cellToString, collectHeaders, normalizeRecord, parseJsonDocument } from "../src/mechanics/data/importers/record-normalizer.ts";
+import { normalizeDateValue, normalizeImportedLayout } from "../src/mechanics/data/importers/layout-normalizer.ts";
+
+function importedDataset(headers, displayRows) {
+  return {
+    meta: {
+      id: "test-dataset",
+      name: "industrial.csv",
+      format: "csv",
+      headers,
+      totalRows: displayRows.length,
+      fileSize: 100,
+      importedAt: "2026-08-12T00:00:00.000Z",
+      chunkCount: 1,
+      sampled: false,
+    },
+    displayRows,
+    warnings: [],
+  };
+}
 
 const expectedExtensions = [
   "csv", "tsv", "txt", "json", "jsonl", "ndjson",
@@ -53,6 +72,63 @@ test("normalizes nested and special values into chart-safe strings", () => {
   assert.equal(row.missing, "");
   assert.equal(cellToString(12n), "12");
   assert.deepEqual(collectHeaders([{ a: 1 }, { b: 2 }], ["timestamp"]), ["timestamp", "a", "b"]);
+});
+
+test("turns industrial Timestamp Tag Value records into chart-ready columns", () => {
+  const normalized = normalizeImportedLayout(importedDataset(
+    ["Timestamp", "Tag", "Value", "Quality"],
+    [
+      { Timestamp: "10.08.2026 14:32", Tag: "DancerPV2", Value: "49.8", Quality: "Good" },
+      { Timestamp: "10.08.2026 14:32", Tag: "DancerSP2", Value: "50", Quality: "Good" },
+      { Timestamp: "10.08.2026 14:33", Tag: "DancerPV2", Value: "50.2", Quality: "Good" },
+      { Timestamp: "10.08.2026 14:33", Tag: "DancerSP2", Value: "50", Quality: "Good" },
+    ],
+  ));
+  assert.equal(normalized.meta.layout, "long-pivoted");
+  assert.equal(normalized.meta.sourceRows, 4);
+  assert.equal(normalized.meta.totalRows, 2);
+  assert.deepEqual(normalized.meta.headers.slice(0, 3), ["Timestamp", "DancerPV2", "DancerSP2"]);
+  assert.deepEqual(normalized.displayRows[0], {
+    Timestamp: "2026-08-10T14:32:00",
+    DancerPV2: "49.8",
+    DancerSP2: "50",
+    "DancerPV2 · Quality": "Good",
+    "DancerSP2 · Quality": "Good",
+  });
+  assert.match(normalized.warnings[0], /czas \+ tag \+ wartość/);
+});
+
+test("accepts transposed tag matrices and Polish timestamps", () => {
+  const normalized = normalizeImportedLayout(importedDataset(
+    ["Tag", "10.08.2026 14:32", "10.08.2026 14:33"],
+    [
+      { Tag: "DancerPV2", "10.08.2026 14:32": "49.8", "10.08.2026 14:33": "50.2" },
+      { Tag: "DancerSP2", "10.08.2026 14:32": "50", "10.08.2026 14:33": "50" },
+    ],
+  ));
+  assert.equal(normalized.meta.layout, "transposed");
+  assert.deepEqual(normalized.meta.headers, ["Timestamp", "DancerPV2", "DancerSP2"]);
+  assert.deepEqual(normalized.displayRows[1], { Timestamp: "2026-08-10T14:33:00", DancerPV2: "50.2", DancerSP2: "50" });
+  assert.equal(normalizeDateValue("31.02.2026 14:32"), null);
+});
+
+test("normalizes a sampled long dataset and keeps its estimated full timeline", () => {
+  const sampled = importedDataset(
+    ["Timestamp", "Tag", "Reading"],
+    [
+      { Timestamp: "10.08.2026 14:32", Tag: "A", Reading: "1" },
+      { Timestamp: "10.08.2026 14:32", Tag: "B", Reading: "2" },
+      { Timestamp: "10.08.2026 14:33", Tag: "A", Reading: "3" },
+      { Timestamp: "10.08.2026 14:33", Tag: "B", Reading: "4" },
+    ],
+  );
+  sampled.meta.totalRows = 100_000;
+  sampled.meta.sampled = true;
+  const normalized = normalizeImportedLayout(sampled);
+  assert.equal(normalized.meta.layout, "long-pivoted");
+  assert.equal(normalized.meta.totalRows, 50_000);
+  assert.equal(normalized.meta.sampled, true);
+  assert.equal(normalized.displayRows.length, 2);
 });
 
 test("ships small JSON, JSONL and TSV import fixtures", async () => {

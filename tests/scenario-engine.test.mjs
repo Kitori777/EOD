@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { calculateScenario } from "../src/mechanics/modeling/engine/scenario-engine.ts";
+import { calculateScenario, supportsScenarioModel } from "../src/mechanics/modeling/engine/scenario-engine.ts";
 
 const baseline = {
   id: "baseline",
@@ -30,4 +30,17 @@ test("growth choices change the baseline result", () => {
   const base = calculateScenario(baseline, rows, ["revenue", "cost", "customers"]);
   assert.notEqual(growth.revenue, base.revenue);
   assert.notEqual(growth.customers, base.customers);
+});
+
+test("does not invent sales values for an unrelated imported file", () => {
+  const industrialRows = [{ Timestamp: "2026-01-01", Dancer_Output: "48.2" }];
+  assert.equal(supportsScenarioModel(["Timestamp", "Dancer_Output"]), false);
+  assert.deepEqual(calculateScenario(baseline, industrialRows, ["Timestamp", "Dancer_Output"]), {
+    revenue: 0,
+    cost: 0,
+    profit: 0,
+    margin: 0,
+    customers: 0,
+    risk: 0,
+  });
 });

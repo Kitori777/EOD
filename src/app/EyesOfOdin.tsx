@@ -6,19 +6,30 @@ import { HomeView } from "./views/HomeView";
 import { APP_VERSION } from "./version";
 import { useI18n } from "./i18n/translations";
 import { SettingsDialog } from "./settings/SettingsDialog";
+import { HelpCenterDialog, type HelpDestination } from "./help/HelpCenterDialog";
 import { useAppPreferences } from "./settings/preferences";
 import { calculateCanvasPan, clampWorkspacePanelSize, DEFAULT_WORKSPACE_SIZES, type Point, type WorkspacePanel } from "./layout/workspace-layout";
 import { LEGACY_WORKSPACE_KEY, loadWorkspace, saveWorkspace, WORKSPACE_MARKER_KEY, type WorkspaceSnapshot } from "./storage/workspace-storage";
 import { ChartStudio } from "../mechanics/charts/components/ChartStudio";
 import { applyTemplateToDataset, type DashboardGrid, type DashboardTemplate } from "../mechanics/charts/templates/dashboard-templates";
-import type { ChartDefinition, DataRow } from "../mechanics/charts/types/chart-types";
+import type { Aggregation, ChartDefinition, DataRow } from "../mechanics/charts/types/chart-types";
+import { compareColumns, compareGroups, getGroupValues, type ComparisonMode } from "../mechanics/compare/comparison-engine";
 import type { DatasetMeta, ImportProgress } from "../mechanics/data/types/data-types";
 import { importDataFile, supportedDataFile } from "../mechanics/data/importers/file-import";
 import { DATA_FILE_ACCEPT, SUPPORTED_DATA_FORMAT_LABELS, workbookDataFile } from "../mechanics/data/importers/format-registry";
 import { inspectWorkbookSheets } from "../mechanics/data/importers/workbook-import";
-import { calculateScenario } from "../mechanics/modeling/engine/scenario-engine";
+import { calculateScenario, supportsScenarioModel } from "../mechanics/modeling/engine/scenario-engine";
+import { executeDataModel, validateDataModel } from "../mechanics/modeling/engine/model-execution-engine";
+import { evaluateFormulaSeries } from "../mechanics/modeling/engine/formula-engine";
+import { applyModelMemory } from "../mechanics/modeling/engine/model-memory-engine";
+import { resolveModelConnection, reverseModelConnection } from "../mechanics/modeling/engine/model-graph-editor";
+import { ModelVerificationStudio } from "../mechanics/modeling/components/ModelVerificationStudio";
+import { ModelSettingsDialog, type ModelSettingsTab } from "../mechanics/modeling/components/ModelSettingsDialog";
 import { findVacantNodePosition, getGraphBounds, hasNodeCollisions, layoutModelGraph, snapModelCoordinate } from "../mechanics/modeling/layout/model-layout";
-import type { BottomTab, ModelEdge, ModelNode, NodeKind, Scenario, ViewId } from "../mechanics/modeling/types/model-types";
+import type { BottomTab, ModelDependencyRule, ModelEdge, ModelExecutionResult, ModelMemoryEntry, ModelNode, ModelNodeConfig, ModelParameter, ModelWorkspaceMode, NodeKind, Scenario, ViewId } from "../mechanics/modeling/types/model-types";
+import { DiagnosticStudio } from "../mechanics/simulation/components/DiagnosticStudio";
+import { WhatIfStudio } from "../mechanics/simulation/components/WhatIfStudio";
+import { DEFAULT_DIAGNOSTIC_PREFERENCES, DEFAULT_VERIFICATION_PREFERENCES, type DiagnosticPreferences, type VerificationPreferences, type WhatIfScenario } from "../mechanics/simulation/types/simulation-types";
 
 type ColumnProfile = {
   name: string;
@@ -29,8 +40,21 @@ type ColumnProfile = {
 };
 
 type BottomPanelMode = "collapsed" | "normal" | "maximized";
+type ModelUndoAction =
+  | { kind: "node"; node: ModelNode; edges: ModelEdge[] }
+  | { kind: "edge"; edge: ModelEdge };
 
 function suggestedCharts(columns: ColumnProfile[], datasetId: string): ChartDefinition[] {
+  const names = new Set(columns.map((column) => column.name));
+  if (["Timestamp", "Dancer_Setpoint", "Dancer_Process_Value", "Dancer_Output", "Nip_Setpoint", "Nip_Process_Value", "Line_Speed"].every((name) => names.has(name))) {
+    const p90 = (id: string, field: string, direction: "above" | "below", label: string, description: string): ChartDefinition["thresholds"] => [{ id, field, mode: "percentile", percentile: 90, direction, label, severity: "warning", description, evaluation: "raw", enabled: true }];
+    return [
+      { id: `chart-${Date.now()}-dancer-track`, title: "Dancer · spadki poniżej dolnej granicy 90%", datasetId, type: "line", xField: "Timestamp", yFields: ["Dancer_Setpoint", "Dancer_Process_Value"], aggregation: "average", filters: [], thresholds: p90("dancer-process-lower-90", "Dancer_Process_Value", "below", "Niski poziom Dancer", "Wartość procesu znalazła się w dolnych 10% obserwacji."), size: "large" },
+      { id: `chart-${Date.now()}-dancer-output`, title: "Dancer Output · zdarzenia powyżej górnej granicy 90%", datasetId, type: "area", xField: "Timestamp", yFields: ["Dancer_Output"], aggregation: "average", filters: [], thresholds: p90("dancer-output-p90", "Dancer_Output", "above", "Wysoki Dancer Output", "Podwyższony poziom względem 90% obserwacji w wybranym okresie."), size: "large" },
+      { id: `chart-${Date.now()}-nip-track`, title: "Nip · spadki poniżej dolnej granicy 90%", datasetId, type: "line", xField: "Timestamp", yFields: ["Nip_Setpoint", "Nip_Process_Value"], aggregation: "average", filters: [], thresholds: p90("nip-process-lower-90", "Nip_Process_Value", "below", "Niski poziom Nip", "Wartość procesu znalazła się w dolnych 10% obserwacji."), size: "large" },
+      { id: `chart-${Date.now()}-production`, title: "Prędkość linii · zdarzenia powyżej górnej granicy 90%", datasetId, type: "line", xField: "Timestamp", yFields: ["Line_Speed"], aggregation: "average", filters: [], thresholds: p90("line-speed-p90", "Line_Speed", "above", "Wysoka prędkość linii", "Nietypowo wysoka prędkość w porównaniu z analizowanym okresem."), size: "large" },
+    ];
+  }
   const numeric = columns.filter((column) => column.type === "number");
   if (!numeric.length) return [];
   const category = columns.find((column) => column.type === "date")
@@ -64,6 +88,11 @@ function suggestedCharts(columns: ColumnProfile[], datasetId: string): ChartDefi
     });
   }
   return charts;
+}
+
+function createImportedModel(fileName: string, totalRows: number, columns: ColumnProfile[]) {
+  const source: ModelNode = { id: "source", kind: "source", title: fileName, subtitle: `${totalRows} wierszy · ${columns.length} kolumn`, x: 120, y: 190 };
+  return { nodes: [source], edges: [] as ModelEdge[] };
 }
 
 function downloadTextFile(name: string, content: string, type = "text/csv;charset=utf-8") {
@@ -190,8 +219,7 @@ const navItems: Array<{ id: ViewId; icon: string; label: string; shortcut: strin
   { id: "model", icon: "◇", label: "Model", shortcut: "1" },
   { id: "data", icon: "▦", label: "Dane", shortcut: "2" },
   { id: "charts", icon: "▥", label: "Wykresy", shortcut: "3" },
-  { id: "paths", icon: "⑂", label: "Ścieżki", shortcut: "4" },
-  { id: "compare", icon: "◫", label: "Porównaj", shortcut: "5" },
+  { id: "paths", icon: "⌁", label: "Diagnostyka", shortcut: "4" },
 ];
 
 const kindMeta: Record<NodeKind, { label: string; icon: string }> = {
@@ -275,24 +303,35 @@ function formatMoney(value: number) {
   }).format(value);
 }
 
-function formatCompact(value: number) {
-  return new Intl.NumberFormat("pl-PL", { notation: "compact", maximumFractionDigits: 1 }).format(value);
-}
-
 function formatBytes(value: number) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function modelFileName(value: string) {
+  const slug = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("pl")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return `${slug || "model"}.odin`;
+}
+
 export default function EyesOfOdin() {
   const { preferences } = useAppPreferences();
   const { t, locale } = useI18n();
+  const label = (pl: string, en: string) => preferences.language === "en" ? en : pl;
+  const kindLabel = (kind: NodeKind) => label(kindMeta[kind].label, kind === "source" ? "Source" : kind === "transform" ? "Transformation" : kind === "decision" ? "Decision" : kind === "metric" ? "Metric" : "Result");
   const parsedSample = useMemo(() => parseCsv(sampleCsv), []);
   const [homeOpen, setHomeOpen] = useState(true);
   const [hasSavedWorkspace, setHasSavedWorkspace] = useState(false);
   const [workspaceActive, setWorkspaceActive] = useState(false);
+  const [projectName, setProjectName] = useState("Nowy projekt");
+  const [modelName, setModelName] = useState("Model analizy danych");
   const [view, setView] = useState<ViewId>("model");
+  const [modelMode, setModelMode] = useState<ModelWorkspaceMode>("build");
   const [bottomTab, setBottomTab] = useState<BottomTab>("results");
   const [rows, setRows] = useState<DataRow[]>([]);
   const [headers, setHeaders] = useState<string[]>([]);
@@ -307,11 +346,38 @@ export default function EyesOfOdin() {
   const [edges, setEdges] = useState<ModelEdge[]>([]);
   const [scenarios, setScenarios] = useState<Scenario[]>(initialScenarios);
   const [scenarioId, setScenarioId] = useState("baseline");
+  const [comparisonMode, setComparisonMode] = useState<ComparisonMode>("columns");
+  const [comparisonAggregation, setComparisonAggregation] = useState<Aggregation>("average");
+  const [comparisonLeftField, setComparisonLeftField] = useState("");
+  const [comparisonRightField, setComparisonRightField] = useState("");
+  const [comparisonMetricField, setComparisonMetricField] = useState("");
+  const [comparisonGroupField, setComparisonGroupField] = useState("");
+  const [comparisonLeftGroup, setComparisonLeftGroup] = useState("");
+  const [comparisonRightGroup, setComparisonRightGroup] = useState("");
+  const [whatIfScenarios, setWhatIfScenarios] = useState<WhatIfScenario[]>([]);
+  const [activeWhatIfId, setActiveWhatIfId] = useState("");
+  const [dependencyRules, setDependencyRules] = useState<ModelDependencyRule[]>([]);
+  const [modelParameters, setModelParameters] = useState<ModelParameter[]>([]);
+  const [modelMemory, setModelMemory] = useState<ModelMemoryEntry[]>([]);
+  const [verificationPreferences, setVerificationPreferences] = useState<VerificationPreferences>(() => ({ ...DEFAULT_VERIFICATION_PREFERENCES, visibleAreas: [...DEFAULT_VERIFICATION_PREFERENCES.visibleAreas], visibleSeverities: [...DEFAULT_VERIFICATION_PREFERENCES.visibleSeverities], customItems: [] }));
+  const [diagnosticPreferences, setDiagnosticPreferences] = useState<DiagnosticPreferences>(() => ({ ...DEFAULT_DIAGNOSTIC_PREFERENCES, visibleSections: [...DEFAULT_DIAGNOSTIC_PREFERENCES.visibleSections], summaryMetrics: [...DEFAULT_DIAGNOSTIC_PREFERENCES.summaryMetrics], visibleSeverities: [...DEFAULT_DIAGNOSTIC_PREFERENCES.visibleSeverities], monitoredFields: [] }));
+  const [modelExecution, setModelExecution] = useState<ModelExecutionResult | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState("");
+  const [selectedEdgeId, setSelectedEdgeId] = useState("");
+  const [connectionTargetId, setConnectionTargetId] = useState("");
+  const [connectionFromId, setConnectionFromId] = useState("");
+  const [blockMenuOpen, setBlockMenuOpen] = useState(false);
+  const [lastModelAction, setLastModelAction] = useState<ModelUndoAction | null>(null);
   const [zoom, setZoom] = useState(0.9);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
-  const [toast, setToast] = useState("");
+  const [toast, setToastValue] = useState("");
+  const toastLanguage = useRef(preferences.language);
+  const setToast = (message: string) => {
+    toastLanguage.current = preferences.language;
+    setToastValue(message);
+  };
+  const visibleToast = toastLanguage.current === preferences.language ? toast : "";
   const [fileError, setFileError] = useState("");
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
   const [pendingWorkbook, setPendingWorkbook] = useState<{ file: File; sheets: string[] } | null>(null);
@@ -324,6 +390,8 @@ export default function EyesOfOdin() {
   const [inspectorWidth, setInspectorWidth] = useState<number>(DEFAULT_WORKSPACE_SIZES.inspectorWidth);
   const [resultsHeight, setResultsHeight] = useState<number>(DEFAULT_WORKSPACE_SIZES.resultsHeight);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
+  const [modelSettingsTab, setModelSettingsTab] = useState<ModelSettingsTab>("parameters");
   const [helpOpen, setHelpOpen] = useState(false);
   const [drag, setDrag] = useState<{ id: string; startX: number; startY: number; x: number; y: number } | null>(null);
   const [canvasPan, setCanvasPan] = useState<Point>({ x: 0, y: 0 });
@@ -335,13 +403,32 @@ export default function EyesOfOdin() {
   const cancelFallbackRef = useRef<number | null>(null);
 
   const profiles = useMemo(() => profileColumns(rows, headers), [rows, headers]);
-  const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? nodes[0];
+  const modelRows = useMemo(() => applyModelMemory(rows, modelMemory), [rows, modelMemory]);
+  const modelNumericFields = useMemo(() => [...new Set([
+    ...profiles.filter((profile) => profile.type === "number").map((profile) => profile.name),
+    ...nodes.filter((node) => node.kind === "transform").map((node) => node.config?.outputField?.trim()).filter((field): field is string => Boolean(field)),
+  ])], [profiles, nodes]);
+  const selectedNode = nodes.find((node) => node.id === selectedNodeId);
+  const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId);
+  const selectedTransformInputFields = selectedNode?.kind === "transform" ? modelNumericFields.filter((field) => field !== selectedNode.config?.outputField?.trim()) : modelNumericFields;
   const scenario = scenarios.find((item) => item.id === scenarioId) ?? scenarios[0];
   const baselineScenario = scenarios[0];
 
   const metrics = useMemo(() => calculateScenario(scenario, rows, headers), [scenario, rows, headers]);
   const baselineMetrics = useMemo(() => calculateScenario(baselineScenario, rows, headers), [baselineScenario, rows, headers]);
   const hasDataset = datasetId !== "empty" && headers.length > 0;
+  const scenarioModelAvailable = supportsScenarioModel(headers);
+  const modelValidation = useMemo(() => validateDataModel(nodes, edges, [...new Set([...headers, ...modelNumericFields])], modelParameters, preferences.language), [nodes, edges, headers, modelNumericFields, modelParameters, preferences.language]);
+  const selectedFormulaPreview = useMemo(() => {
+    const formula = selectedNode?.config?.formula?.trim();
+    if (!formula) return null;
+    const preview = evaluateFormulaSeries(formula, modelRows.slice(0, 250), modelParameters);
+    return { ...preview, average: preview.values.length ? preview.values.reduce((sum, value) => sum + value, 0) / preview.values.length : undefined };
+  }, [selectedNode, modelRows, modelParameters]);
+
+  useEffect(() => {
+    setModelExecution(null);
+  }, [rows, nodes, edges, modelParameters, modelMemory]);
 
   useEffect(() => {
     const hasModernSave = localStorage.getItem(WORKSPACE_MARKER_KEY) !== null;
@@ -372,7 +459,9 @@ export default function EyesOfOdin() {
   useEffect(() => {
     if (!workspaceActive) return;
     const snapshot: WorkspaceSnapshot = {
-      version: 2,
+      version: 8,
+      projectName,
+      modelName,
       rows,
       headers,
       datasetName,
@@ -388,17 +477,25 @@ export default function EyesOfOdin() {
       scenarioId,
       selectedNodeId,
       view,
+      modelMode,
       zoom,
       canvasPan,
+      whatIfScenarios,
+      activeWhatIfId,
+      dependencyRules,
+      modelParameters,
+      modelMemory,
+      verificationPreferences,
+      diagnosticPreferences,
     };
     const timer = window.setTimeout(() => {
       void saveWorkspace(snapshot).then(() => {
         localStorage.removeItem(LEGACY_WORKSPACE_KEY);
         setHasSavedWorkspace(true);
-      }).catch(() => setToast("Nie udało się zapisać projektu lokalnie"));
+      }).catch(() => setToast(label("Nie udało się zapisać projektu lokalnie", "The project could not be saved locally")));
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [workspaceActive, rows, headers, datasetName, datasetId, datasetMeta, charts, dashboardGrid, templates, defaultTemplateId, nodes, edges, scenarios, scenarioId, selectedNodeId, view, zoom, canvasPan]);
+  }, [workspaceActive, projectName, modelName, rows, headers, datasetName, datasetId, datasetMeta, charts, dashboardGrid, templates, defaultTemplateId, nodes, edges, scenarios, scenarioId, selectedNodeId, view, modelMode, zoom, canvasPan, whatIfScenarios, activeWhatIfId, dependencyRules, modelParameters, modelMemory, verificationPreferences, diagnosticPreferences]);
 
   useEffect(() => {
     localStorage.setItem("eyes-of-odin-ui-v1", JSON.stringify({ showExplorer, showInspector, bottomPanelMode, explorerWidth, inspectorWidth, resultsHeight }));
@@ -412,7 +509,7 @@ export default function EyesOfOdin() {
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
-        setToast("Projekt zapisany lokalnie");
+        setToast(label("Projekt zapisany lokalnie", "Project saved locally"));
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") {
         event.preventDefault();
@@ -425,7 +522,10 @@ export default function EyesOfOdin() {
       if (event.key === "Escape") {
         setCommandOpen(false);
         setSettingsOpen(false);
+        setModelSettingsOpen(false);
         setHelpOpen(false);
+        setConnectionFromId("");
+        setBlockMenuOpen(false);
         importControllerRef.current?.abort();
       }
     };
@@ -437,6 +537,8 @@ export default function EyesOfOdin() {
     const restoredEdges = snapshot.edges ?? [];
     const restoredNodes = hasNodeCollisions(snapshot.nodes) ? layoutModelGraph(snapshot.nodes, restoredEdges) : snapshot.nodes;
     const restoredScenarios = snapshot.scenarios.length ? snapshot.scenarios : initialScenarios;
+    setProjectName(snapshot.projectName?.trim() || "Model wzrostu sprzedaży");
+    setModelName(snapshot.modelName?.trim() || "Model wzrostu");
     setRows(snapshot.rows);
     setHeaders(snapshot.headers);
     setDatasetName(snapshot.datasetName);
@@ -451,18 +553,52 @@ export default function EyesOfOdin() {
     setScenarios(restoredScenarios);
     setScenarioId(restoredScenarios.some((item) => item.id === snapshot.scenarioId) ? snapshot.scenarioId : restoredScenarios[0].id);
     setSelectedNodeId(restoredNodes.some((node) => node.id === snapshot.selectedNodeId) ? snapshot.selectedNodeId : restoredNodes[0]?.id ?? "");
-    setView(snapshot.view);
+    setSelectedEdgeId("");
+    setConnectionFromId("");
+    setBlockMenuOpen(false);
+    setLastModelAction(null);
+    setView(snapshot.view === "compare" ? "model" : snapshot.view);
+    setModelMode(snapshot.view === "compare" ? "simulate" : snapshot.modelMode ?? "build");
     setZoom(snapshot.zoom);
     setCanvasPan(snapshot.canvasPan);
+    const restoredWhatIf = (snapshot.whatIfScenarios ?? []).map((item) => ({
+      ...item,
+      responseMode: item.responseMode ?? "auto",
+      estimateOutputs: item.estimateOutputs ?? true,
+      econometricModel: item.econometricModel ?? "auto",
+      econometricMaxLag: item.econometricMaxLag ?? 12,
+    }));
+    setWhatIfScenarios(restoredWhatIf);
+    setActiveWhatIfId(snapshot.activeWhatIfId ?? restoredWhatIf[0]?.id ?? "");
+    setDependencyRules(snapshot.dependencyRules ?? []);
+    setModelParameters(snapshot.modelParameters ?? []);
+    setModelMemory(snapshot.modelMemory ?? []);
+    setVerificationPreferences({
+      ...DEFAULT_VERIFICATION_PREFERENCES,
+      ...snapshot.verificationPreferences,
+      visibleAreas: snapshot.verificationPreferences?.visibleAreas ?? [...DEFAULT_VERIFICATION_PREFERENCES.visibleAreas],
+      visibleSeverities: snapshot.verificationPreferences?.visibleSeverities ?? [...DEFAULT_VERIFICATION_PREFERENCES.visibleSeverities],
+      customItems: snapshot.verificationPreferences?.customItems ?? [],
+    });
+    setDiagnosticPreferences({
+      ...DEFAULT_DIAGNOSTIC_PREFERENCES,
+      ...snapshot.diagnosticPreferences,
+      visibleSections: snapshot.diagnosticPreferences?.visibleSections ?? [...DEFAULT_DIAGNOSTIC_PREFERENCES.visibleSections],
+      summaryMetrics: snapshot.diagnosticPreferences?.summaryMetrics ?? [...DEFAULT_DIAGNOSTIC_PREFERENCES.summaryMetrics],
+      visibleSeverities: snapshot.diagnosticPreferences?.visibleSeverities ?? [...DEFAULT_DIAGNOSTIC_PREFERENCES.visibleSeverities],
+      monitoredFields: snapshot.diagnosticPreferences?.monitoredFields ?? [],
+    });
     setWorkspaceActive(true);
     setHomeOpen(false);
-    setToast(restoredNodes !== snapshot.nodes ? "Przywrócono sesję i uporządkowano model" : "Przywrócono ostatnią sesję");
+    setToast(restoredNodes !== snapshot.nodes
+      ? label("Przywrócono sesję i uporządkowano model", "Session restored and model arranged")
+      : label("Przywrócono ostatnią sesję", "Last session restored"));
   };
 
   const resumeWorkspace = async () => {
     try {
       const saved = await loadWorkspace();
-      if (saved?.version === 2) {
+      if (saved?.version === 2 || saved?.version === 3 || saved?.version === 4 || saved?.version === 5 || saved?.version === 6 || saved?.version === 7 || saved?.version === 8) {
         applyWorkspaceSnapshot(saved);
         return;
       }
@@ -470,14 +606,16 @@ export default function EyesOfOdin() {
       const legacyRaw = localStorage.getItem(LEGACY_WORKSPACE_KEY);
       if (!legacyRaw || !isMeaningfulLegacyWorkspace(legacyRaw)) {
         setHasSavedWorkspace(false);
-        setToast("Nie znaleziono zapisanej sesji");
+        setToast(label("Nie znaleziono zapisanej sesji", "No saved session found"));
         return;
       }
       const legacy = JSON.parse(legacyRaw) as Partial<WorkspaceSnapshot>;
       const legacyRows = parsedSample.rows;
       const legacyHeaders = parsedSample.headers;
       applyWorkspaceSnapshot({
-        version: 2,
+        version: 8,
+        projectName: legacy.projectName ?? "Model wzrostu sprzedaży",
+        modelName: legacy.modelName ?? "Model wzrostu",
         rows: legacyRows,
         headers: legacyHeaders,
         datasetName: "sprzedaz_2026.csv",
@@ -495,13 +633,22 @@ export default function EyesOfOdin() {
         view: legacy.view ?? "model",
         zoom: legacy.zoom ?? 0.9,
         canvasPan: legacy.canvasPan ?? { x: 0, y: 0 },
+        whatIfScenarios: [],
+        activeWhatIfId: "",
+        dependencyRules: [],
+        modelParameters: [],
+        modelMemory: [],
+        verificationPreferences: { ...DEFAULT_VERIFICATION_PREFERENCES, visibleAreas: [...DEFAULT_VERIFICATION_PREFERENCES.visibleAreas], visibleSeverities: [...DEFAULT_VERIFICATION_PREFERENCES.visibleSeverities], customItems: [] },
+        diagnosticPreferences: { ...DEFAULT_DIAGNOSTIC_PREFERENCES, visibleSections: [...DEFAULT_DIAGNOSTIC_PREFERENCES.visibleSections], summaryMetrics: [...DEFAULT_DIAGNOSTIC_PREFERENCES.summaryMetrics], visibleSeverities: [...DEFAULT_DIAGNOSTIC_PREFERENCES.visibleSeverities], monitoredFields: [] },
       });
     } catch {
-      setToast("Nie udało się przywrócić zapisanej sesji");
+      setToast(label("Nie udało się przywrócić zapisanej sesji", "The saved session could not be restored"));
     }
   };
 
   const startEmptyWorkspace = () => {
+    setProjectName("Nowy projekt");
+    setModelName("Model analizy danych");
     setRows([]);
     setHeaders([]);
     setDatasetName("Brak wczytanego pliku");
@@ -513,8 +660,20 @@ export default function EyesOfOdin() {
     setEdges([]);
     setScenarios(initialScenarios);
     setScenarioId("baseline");
+    setWhatIfScenarios([]);
+    setActiveWhatIfId("");
+    setDependencyRules([]);
+    setModelParameters([]);
+    setModelMemory([]);
+    setVerificationPreferences({ ...DEFAULT_VERIFICATION_PREFERENCES, visibleAreas: [...DEFAULT_VERIFICATION_PREFERENCES.visibleAreas], visibleSeverities: [...DEFAULT_VERIFICATION_PREFERENCES.visibleSeverities], customItems: [] });
+    setDiagnosticPreferences({ ...DEFAULT_DIAGNOSTIC_PREFERENCES, visibleSections: [...DEFAULT_DIAGNOSTIC_PREFERENCES.visibleSections], summaryMetrics: [...DEFAULT_DIAGNOSTIC_PREFERENCES.summaryMetrics], visibleSeverities: [...DEFAULT_DIAGNOSTIC_PREFERENCES.visibleSeverities], monitoredFields: [] });
     setSelectedNodeId("");
+    setSelectedEdgeId("");
+    setConnectionFromId("");
+    setBlockMenuOpen(false);
+    setLastModelAction(null);
     setView("model");
+    setModelMode("build");
     setZoom(0.9);
     setCanvasPan({ x: 0, y: 0 });
     setBottomPanelMode("collapsed");
@@ -536,10 +695,6 @@ export default function EyesOfOdin() {
     setScenarios((current) => current.map((item) => (item.id === scenario.id ? { ...item, ...patch } : item)));
   };
 
-  const updateChoice = (group: keyof Scenario["choices"], value: string) => {
-    updateScenario({ choices: { ...scenario.choices, [group]: value } });
-  };
-
   const performImport = async (file: File, sheetName?: string) => {
     const importingFromHome = homeOpen;
     setFileError("");
@@ -557,37 +712,63 @@ export default function EyesOfOdin() {
       setDatasetMeta(imported.meta);
       const importedProfiles = profileColumns(imported.displayRows, imported.meta.headers);
       const importedColumns = importedProfiles.map(({ name, type }) => ({ name, type }));
+      const numericFields = importedProfiles.filter((profile) => profile.type === "number").map((profile) => profile.name);
+      const varyingNumericFields = importedProfiles.filter((profile) => profile.type === "number" && profile.unique > 1).map((profile) => profile.name);
+      const whatIfInput = varyingNumericFields[0] ?? numericFields[0] ?? "";
+      const nextWhatIf: WhatIfScenario = {
+        id: `what-if-${Date.now()}`,
+        name: "Scenariusz 1",
+        inputField: whatIfInput,
+        operation: "percent",
+        value: 10,
+        scope: { kind: "all" },
+        outputFields: [],
+        estimateOutputs: true,
+        responseMode: "auto",
+        econometricModel: "auto",
+        econometricMaxLag: 12,
+      };
+      setWhatIfScenarios(numericFields.length ? [nextWhatIf] : []);
+      setActiveWhatIfId(numericFields.length ? nextWhatIf.id : "");
+      setDependencyRules([]);
       const defaultTemplate = templates.find((template) => template.id === defaultTemplateId);
       if (defaultTemplate) {
         const applied = applyTemplateToDataset(defaultTemplate, importedColumns, imported.meta.id);
         setCharts(applied.charts);
         setDashboardGrid(defaultTemplate.grid);
-        if (applied.missing.length) setToast(`Wczytano dane. Uzupełnij pola: ${applied.missing.join(", ")}`);
+        if (applied.missing.length) setToast(`${label("Wczytano dane. Uzupełnij pola:", "Data loaded. Complete these fields:")} ${applied.missing.join(", ")}`);
       } else {
         const nextCharts = suggestedCharts(importedProfiles, imported.meta.id);
         setCharts(nextCharts);
         setDashboardGrid(nextCharts.length > 1 ? 4 : 1);
       }
-      setNodes((current) => {
-        if (importingFromHome) return [{ id: "source", kind: "source", title: file.name, subtitle: `${imported.meta.totalRows} wierszy · ${imported.meta.headers.length} kolumn`, x: 120, y: 190 }];
-        const source = current.find((node) => node.id === "source");
-        if (!source) return [{ id: "source", kind: "source", title: file.name, subtitle: `${imported.meta.totalRows} wierszy · ${imported.meta.headers.length} kolumn`, x: 120, y: 190 }];
-        return current.map((node) => node.id === "source"
-          ? { ...node, title: file.name, subtitle: `${imported.meta.totalRows} wierszy · ${imported.meta.headers.length} kolumn` }
-          : node);
-      });
       if (importingFromHome) {
-        setEdges([]);
+        const importedModel = createImportedModel(file.name, imported.meta.totalRows, importedProfiles);
+        setNodes(importedModel.nodes);
+        setEdges(importedModel.edges);
+        const baseName = file.name.replace(/\.[^.]+$/, "");
+        setProjectName(`Analiza ${baseName}`);
+        setModelName("Model danych");
         setScenarios(initialScenarios);
         setScenarioId("baseline");
+      } else {
+        setNodes((current) => {
+          const source = current.find((node) => node.id === "source");
+          if (!source) return [{ id: "source", kind: "source", title: file.name, subtitle: `${imported.meta.totalRows} wierszy · ${imported.meta.headers.length} kolumn`, x: 120, y: 190 }];
+          return current.map((node) => node.id === "source"
+            ? { ...node, title: file.name, subtitle: `${imported.meta.totalRows} wierszy · ${imported.meta.headers.length} kolumn` }
+            : node);
+        });
       }
       setSelectedNodeId("source");
+      setSelectedEdgeId("");
+      setConnectionFromId("");
       setWorkspaceActive(true);
-      setToast(`Wczytano ${imported.meta.totalRows.toLocaleString("pl-PL")} rekordów${imported.meta.sampled ? " · wykresy używają próbki" : ""}`);
+      setToast(imported.warnings.at(-1) ?? `${label("Wczytano", "Loaded")} ${imported.meta.totalRows.toLocaleString(preferences.language === "en" ? "en-US" : "pl-PL")} ${label("rekordów", "records")}${imported.meta.sampled ? label(" · wykresy używają próbki", " · charts use a sample") : ""}`);
       setView("charts");
       setHomeOpen(false);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") setToast("Import anulowany");
+      if (error instanceof DOMException && error.name === "AbortError") setToast(label("Import anulowany", "Import cancelled"));
       else setFileError(error instanceof Error ? error.message : "Nie udało się odczytać pliku.");
     } finally {
       if (cancelFallbackRef.current) window.clearTimeout(cancelFallbackRef.current);
@@ -624,7 +805,7 @@ export default function EyesOfOdin() {
         await performImport(file, sheets[0]);
       } catch (error) {
         setImportProgress(null);
-        if (error instanceof DOMException && error.name === "AbortError") setToast("Import anulowany");
+        if (error instanceof DOMException && error.name === "AbortError") setToast(label("Import anulowany", "Import cancelled"));
         else setFileError(error instanceof Error ? error.message : "Nie udało się sprawdzić skoroszytu.");
       } finally {
         if (importControllerRef.current === controller) importControllerRef.current = null;
@@ -645,34 +826,224 @@ export default function EyesOfOdin() {
       kind,
       title: `Nowa ${kindMeta[kind].label.toLowerCase()}`,
       subtitle: "Kliknij, aby skonfigurować",
+      config: kind === "decision" ? {
+        field: profiles.find((profile) => profile.type === "number" && profile.unique > 1)?.name,
+        timeField: profiles.find((profile) => profile.type === "date")?.name,
+        thresholdMode: "percentile",
+        percentile: 90,
+        direction: "above",
+        severity: "warning",
+      } : kind === "transform" ? {
+        field: modelNumericFields[0], transformOperation: "formula", formula: modelNumericFields[0] ? `[${modelNumericFields[0]}]` : "", outputField: modelNumericFields[0] ? `${modelNumericFields[0]}_model` : "Wynik_formuly",
+      } : kind === "metric" ? {
+        field: modelNumericFields[0], calculation: "average",
+      } : kind === "result" && anchor?.kind !== "metric" && anchor?.kind !== "decision" ? {
+        field: modelNumericFields[0], calculation: "average",
+      } : undefined,
       ...position,
     };
     setNodes((current) => [...current, next]);
-    if (anchor) setEdges((current) => [...current, { id: `edge-${Date.now()}`, from: anchor.id, to: id }]);
+    if (anchor) {
+      const plan = resolveModelConnection(anchor.id, id, [...nodes, next], edges);
+      if (plan.ok) setEdges((current) => [...current, { id: `edge-${Date.now()}`, from: plan.from, to: plan.to }]);
+    }
     setSelectedNodeId(id);
+    setSelectedEdgeId("");
+    setConnectionFromId("");
+    setBlockMenuOpen(false);
+    setShowInspector(true);
     setWorkspaceActive(true);
-    setToast(`${kindMeta[kind].label} dodana do modelu`);
+    setToast(`${kindLabel(kind)} ${label("dodana do modelu", "added to the model")}`);
+  };
+
+  const buildFormulaExample = () => {
+    const numeric = profiles.filter((profile) => profile.type === "number" && profile.unique > 1);
+    if (!numeric.length) { setToast(label("Plik nie zawiera zmiennej kolumny liczbowej", "The file does not contain a variable numeric field")); return; }
+    const first = numeric[0].name;
+    const second = numeric[1]?.name;
+    const source = nodes.find((node) => node.kind === "source") ?? { id: "source", kind: "source" as const, title: datasetName, subtitle: `${datasetMeta.totalRows} wierszy · ${headers.length} kolumn`, x: 80, y: 210 };
+    const suffix = Date.now();
+    const transform: ModelNode = { id: `transform-${suffix}`, kind: "transform", title: second ? `Różnica ${first} − ${second}` : `Zmiana ${first}`, subtitle: second ? `[${first}] - [${second}]` : `[${first}] * 1.1`, x: 330, y: 210, config: { transformOperation: "formula", formula: second ? `[${first}] - [${second}]` : `[${first}] * 1.1`, outputField: "Wynik_formuly" } };
+    const metric: ModelNode = { id: `metric-${suffix}`, kind: "metric", title: "Średni wynik formuły", subtitle: "Średnia · Wynik_formuly", x: 580, y: 210, config: { field: "Wynik_formuly", calculation: "average" } };
+    const result: ModelNode = { id: `result-${suffix}`, kind: "result", title: "Podsumowanie modelu", subtitle: "Wynik końcowy", x: 830, y: 210 };
+    setNodes([source, transform, metric, result]);
+    setEdges([
+      { id: `edge-source-${suffix}`, from: source.id, to: transform.id },
+      { id: `edge-transform-${suffix}`, from: transform.id, to: metric.id },
+      { id: `edge-metric-${suffix}`, from: metric.id, to: result.id },
+    ]);
+    setSelectedNodeId(transform.id);
+    setShowInspector(true);
+    setBottomPanelMode("normal");
+    setToast(label("Zbudowano przykładowy model z danych", "A sample model was built from the data"));
+  };
+
+  const connectModelNodes = (fromId: string, toId: string) => {
+    const plan = resolveModelConnection(fromId, toId, nodes, edges);
+    if (!plan.ok) {
+      setToast(plan.reason);
+      return false;
+    }
+    const edge: ModelEdge = { id: `edge-${Date.now()}`, from: plan.from, to: plan.to };
+    setEdges((current) => [...current, edge]);
+    setSelectedNodeId(plan.to);
+    setSelectedEdgeId("");
+    setConnectionFromId("");
+    setConnectionTargetId("");
+    setWorkspaceActive(true);
+    setToast(label("Relacja dodana · zmiana może płynąć do kolejnego bloku", "Relationship added · the change can flow to the next block"));
+    return true;
+  };
+
+  const startConnection = (nodeId = selectedNode?.id ?? "") => {
+    if (!nodeId) {
+      setToast(label("Najpierw wybierz blok początkowy relacji", "Select the relationship's starting block first"));
+      return;
+    }
+    setConnectionFromId(nodeId);
+    setSelectedEdgeId("");
+    setBlockMenuOpen(false);
+    const node = nodes.find((candidate) => candidate.id === nodeId);
+    setToast(`${label("Łączenie od", "Connecting from")} „${node?.title ?? label("wybranego bloku", "selected block")}” · ${label("kliknij blok docelowy", "click the target block")}`);
+  };
+
+  const removeEdgeById = (edgeId: string) => {
+    const edge = edges.find((candidate) => candidate.id === edgeId);
+    if (!edge) return;
+    setLastModelAction({ kind: "edge", edge });
+    setEdges((current) => current.filter((candidate) => candidate.id !== edgeId));
+    setSelectedEdgeId("");
+    setToast(label("Relacja usunięta · Ctrl+Z przywraca", "Relationship removed · Ctrl+Z restores it"));
+  };
+
+  const removeNodeById = (nodeId: string) => {
+    const node = nodes.find((candidate) => candidate.id === nodeId);
+    if (!node) return;
+    const connectedEdges = edges.filter((edge) => edge.from === nodeId || edge.to === nodeId);
+    const neighbourId = connectedEdges.map((edge) => edge.from === nodeId ? edge.to : edge.from).find((id) => id !== nodeId);
+    setLastModelAction({ kind: "node", node, edges: connectedEdges });
+    setNodes((current) => current.filter((candidate) => candidate.id !== nodeId));
+    setEdges((current) => current.filter((edge) => edge.from !== nodeId && edge.to !== nodeId));
+    setSelectedNodeId(neighbourId ?? nodes.find((candidate) => candidate.id !== nodeId)?.id ?? "");
+    setSelectedEdgeId("");
+    setConnectionFromId((current) => current === nodeId ? "" : current);
+    setToast(`${node.kind === "source" ? label("Źródło", "Source") : label("Blok", "Block")} ${label("usunięte · Ctrl+Z przywraca", "removed · Ctrl+Z restores it")}`);
   };
 
   const removeSelectedNode = () => {
-    if (!selectedNode || selectedNode.id === "source") return;
-    setNodes((current) => current.filter((node) => node.id !== selectedNode.id));
-    setEdges((current) => current.filter((edge) => edge.from !== selectedNode.id && edge.to !== selectedNode.id));
-    setSelectedNodeId("source");
-    setToast("Element usunięty z modelu");
+    if (selectedNode) removeNodeById(selectedNode.id);
   };
 
-  const handlePointerDown = (event: ReactPointerEvent, node: ModelNode) => {
+  const restoreLastModelAction = () => {
+    if (!lastModelAction) return;
+    if (lastModelAction.kind === "edge") {
+      setEdges((current) => current.some((edge) => edge.id === lastModelAction.edge.id) ? current : [...current, lastModelAction.edge]);
+      setSelectedNodeId("");
+      setSelectedEdgeId(lastModelAction.edge.id);
+      setToast(label("Przywrócono relację", "Relationship restored"));
+    } else {
+      setNodes((current) => current.some((node) => node.id === lastModelAction.node.id) ? current : [...current, lastModelAction.node]);
+      setEdges((current) => [...current, ...lastModelAction.edges.filter((edge) => !current.some((candidate) => candidate.id === edge.id))]);
+      setSelectedNodeId(lastModelAction.node.id);
+      setSelectedEdgeId("");
+      setToast(label("Przywrócono blok i jego relacje", "Block and its relationships restored"));
+    }
+    setLastModelAction(null);
+  };
+
+  const duplicateSelectedNode = () => {
+    if (!selectedNode) return;
+    const id = `${selectedNode.kind}-${Date.now()}`;
+    const position = findVacantNodePosition(nodes, selectedNode, preferences.snapToGrid);
+    const copy: ModelNode = {
+      ...selectedNode,
+      id,
+      title: `${selectedNode.title} — kopia`,
+      config: selectedNode.config ? { ...selectedNode.config } : undefined,
+      ...position,
+    };
+    setNodes((current) => [...current, copy]);
+    setSelectedNodeId(id);
+    setSelectedEdgeId("");
+    setShowInspector(true);
+    setWorkspaceActive(true);
+    setToast(label("Utworzono niezależną kopię bloku", "An independent copy of the block was created"));
+  };
+
+  const reverseSelectedEdge = () => {
+    if (!selectedEdge) return;
+    const plan = reverseModelConnection(selectedEdge, nodes, edges);
+    if (!plan.ok) {
+      setToast(plan.reason);
+      return;
+    }
+    setEdges((current) => current.map((edge) => edge.id === selectedEdge.id ? { ...edge, from: plan.from, to: plan.to } : edge));
+    setToast(label("Odwrócono kierunek relacji", "Relationship direction reversed"));
+  };
+
+  useEffect(() => {
+    const handleModelShortcut = (event: KeyboardEvent) => {
+      if (view !== "model" || modelMode !== "build") return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true'], [role='dialog']")) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        if (!lastModelAction) return;
+        event.preventDefault();
+        restoreLastModelAction();
+        return;
+      }
+      if (event.key === "Delete" || event.key === "Backspace") {
+        if (!selectedEdge && !selectedNode) return;
+        event.preventDefault();
+        if (selectedEdge) removeEdgeById(selectedEdge.id);
+        else if (selectedNode) removeNodeById(selectedNode.id);
+      }
+    };
+    window.addEventListener("keydown", handleModelShortcut);
+    return () => window.removeEventListener("keydown", handleModelShortcut);
+  }, [view, modelMode, lastModelAction, selectedEdge, selectedNode, nodes, edges]);
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>, node: ModelNode) => {
     if (event.button !== 0) return;
+    event.preventDefault();
     event.stopPropagation();
+    if (connectionFromId) {
+      connectModelNodes(connectionFromId, node.id);
+      return;
+    }
+    if (event.shiftKey && selectedNodeId && selectedNodeId !== node.id) {
+      connectModelNodes(selectedNodeId, node.id);
+      return;
+    }
     event.currentTarget.setPointerCapture(event.pointerId);
+    setSelectedEdgeId("");
     setSelectedNodeId(node.id);
     setDrag({ id: node.id, startX: event.clientX, startY: event.clientY, x: node.x, y: node.y });
   };
 
+  const handleNodePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!drag) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const dx = (event.clientX - drag.startX) / zoom;
+    const dy = (event.clientY - drag.startY) / zoom;
+    setNodes((current) => current.map((node) => node.id === drag.id
+      ? { ...node, x: preferences.snapToGrid ? snapModelCoordinate(Math.max(10, drag.x + dx)) : Math.max(10, drag.x + dx), y: preferences.snapToGrid ? snapModelCoordinate(Math.max(10, drag.y + dy)) : Math.max(10, drag.y + dy) }
+      : node));
+  };
+
+  const stopNodeDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    setDrag(null);
+  };
+
   const handleCanvasPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest(".model-node, .canvas-controls, .mini-map")) return;
+    if ((event.target as HTMLElement).closest(".model-node, .edge-wrap, .canvas-controls, .mini-map, .model-builder-guide, .model-selection-toolbar, .model-connection-banner, .model-block-menu")) return;
+    setSelectedNodeId("");
+    setSelectedEdgeId("");
+    setShowInspector(false);
     event.currentTarget.setPointerCapture(event.pointerId);
     setPanDrag({
       pointerId: event.pointerId,
@@ -727,7 +1098,7 @@ export default function EyesOfOdin() {
 
   const arrangeModel = () => {
     setNodes((current) => layoutModelGraph(current, edges));
-    setToast("Model został czytelnie uporządkowany");
+    setToast(label("Model został czytelnie uporządkowany", "Model arranged for readability"));
     window.setTimeout(() => fitModel(), 0);
   };
 
@@ -745,7 +1116,7 @@ export default function EyesOfOdin() {
     const next = { ...scenario, id, name: `Wariant ${scenarios.length}` };
     setScenarios((current) => [...current, next]);
     setScenarioId(id);
-    setToast("Utworzono wariant scenariusza");
+    setToast(label("Utworzono wariant scenariusza", "Scenario variant created"));
   };
 
   const changeSelectedTitle = (title: string) => {
@@ -753,16 +1124,58 @@ export default function EyesOfOdin() {
     setNodes((current) => current.map((node) => node.id === selectedNode.id ? { ...node, title } : node));
   };
 
+  const updateSelectedConfig = (patch: Partial<ModelNodeConfig>) => {
+    if (!selectedNode) return;
+    setNodes((current) => current.map((node) => {
+      if (node.id !== selectedNode.id) return node;
+      const config = { ...node.config, ...patch };
+      const calculationLabels: Record<NonNullable<ModelNodeConfig["calculation"]>, string> = { average: "Średnia", sum: "Suma", minimum: "Minimum", maximum: "Maksimum", last: "Ostatnia wartość", count: "Liczba wartości", violations: "Przekroczone próbki", events: "Zdarzenia" };
+      const transformLabels = { none: "Bez zmiany", add: "Dodaj", multiply: "Pomnóż", percent: "Zmień procentowo", formula: "Formuła" } as const;
+      const subtitle = node.kind === "decision" && config.field ? `${config.field} · ${config.thresholdMode === "manual" ? "próg ręczny" : `P${config.percentile ?? 90}`}`
+        : (node.kind === "metric" || node.kind === "result") && (config.field || config.sourceRuleId) ? `${calculationLabels[config.calculation ?? "average"]} · ${config.field ?? "wybrana reguła"}`
+          : node.kind === "transform" && config.field ? `${transformLabels[config.transformOperation ?? "none"]} · ${config.field}`
+            : node.subtitle;
+      return { ...node, subtitle, config };
+    }));
+  };
+
+  const addSelectedConnection = () => {
+    if (!selectedNode || !connectionTargetId || connectionTargetId === selectedNode.id) return;
+    connectModelNodes(selectedNode.id, connectionTargetId);
+  };
+
+  const runModel = () => {
+    setBottomTab("results");
+    setBottomPanelMode("normal");
+    if (scenarioModelAvailable) {
+      setToast(preferences.language === "en" ? "Model recalculated" : "Model przeliczony");
+      return;
+    }
+    const result = executeDataModel(nodes, edges, modelRows, profiles.map(({ name, type }) => ({ name, type })), modelParameters, preferences.language);
+    setModelExecution(result);
+    setToast(result.ready
+      ? `${label("Model przeliczony", "Model recalculated")} · ${result.outputs.length} ${label("wyników", "results")} · ${result.rules.reduce((sum, rule) => sum + rule.eventCount, 0)} ${label("alertów", "alerts")}`
+      : result.issues[0] ?? label("Model wymaga konfiguracji", "The model requires configuration"));
+  };
+
+  const focusModelIssue = (issue: string) => {
+    const node = nodes.find((candidate) => issue.includes(`„${candidate.title}”`));
+    if (node) {
+      setSelectedNodeId(node.id);
+      setShowInspector(true);
+    }
+  };
+
   const commands = [
-    { label: "Otwórz Model Studio", detail: "Widok grafu", action: () => setView("model") },
-    { label: "Otwórz dane", detail: datasetName, action: () => setView("data") },
-    { label: "Otwórz kreator wykresów", detail: `${charts.length} na pulpicie`, action: () => setView("charts") },
-    { label: "Pokaż ścieżki decyzji", detail: "Decision Map", action: () => setView("paths") },
-    { label: "Porównaj scenariusze", detail: "Bazowy vs aktywny", action: () => setView("compare") },
-    { label: "Utwórz nowy wariant", detail: "Kopia aktywnego", action: createScenario },
-    { label: showExplorer ? "Ukryj eksplorator" : "Pokaż eksplorator", detail: "Ctrl+B", action: () => setShowExplorer((visible) => !visible) },
-    { label: bottomPanelMode === "collapsed" ? "Pokaż panel wyników" : "Ukryj panel wyników", detail: "Ctrl+J", action: () => setBottomPanelMode((mode) => mode === "collapsed" ? "normal" : "collapsed") },
-    { label: "Otwórz ustawienia", detail: "Układ przestrzeni roboczej", action: () => setSettingsOpen(true) },
+    { label: label("Otwórz budowę modelu", "Open model builder"), detail: label("Widok grafu", "Graph view"), action: () => { setView("model"); setModelMode("build"); } },
+    { label: label("Otwórz dane", "Open data"), detail: datasetName, action: () => setView("data") },
+    { label: label("Otwórz kreator wykresów", "Open chart builder"), detail: label(`${charts.length} na pulpicie`, `${charts.length} on dashboard`), action: () => setView("charts") },
+    { label: label("Otwórz diagnostykę", "Open diagnostics"), detail: datasetName, action: () => setView("paths") },
+    { label: label("Otwórz symulację Co-jeśli", "Open What-if simulation"), detail: label("Wariant przez cały model", "Variant through the whole model"), action: () => { setView("model"); setModelMode("simulate"); } },
+    { label: label("Utwórz nowy wariant", "Create new variant"), detail: label("Kopia aktywnego", "Copy of active variant"), action: createScenario },
+    { label: showExplorer ? label("Ukryj eksplorator", "Hide explorer") : label("Pokaż eksplorator", "Show explorer"), detail: "Ctrl+B", action: () => setShowExplorer((visible) => !visible) },
+    { label: bottomPanelMode === "collapsed" ? label("Pokaż panel wyników", "Show results panel") : label("Ukryj panel wyników", "Hide results panel"), detail: "Ctrl+J", action: () => setBottomPanelMode((mode) => mode === "collapsed" ? "normal" : "collapsed") },
+    { label: label("Otwórz ustawienia", "Open settings"), detail: label("Układ przestrzeni roboczej", "Workspace layout"), action: () => setSettingsOpen(true) },
   ].filter((command) => command.label.toLowerCase().includes(commandQuery.toLowerCase()));
 
   const renderEdge = (edge: ModelEdge) => {
@@ -777,27 +1190,46 @@ export default function EyesOfOdin() {
     const dy = y2 - y1;
     const length = Math.sqrt(dx * dx + dy * dy);
     const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+    const fromTitle = from.title;
+    const toTitle = to.title;
     return (
-      <div key={edge.id} className="edge-wrap" style={{ left: x1, top: y1, width: length, transform: `rotate(${angle}deg)` }}>
+      <button
+        key={edge.id}
+        type="button"
+        className={`edge-wrap ${selectedEdgeId === edge.id ? "selected" : ""}`}
+        style={{ left: x1, top: y1 - 9, width: length, transform: `rotate(${angle}deg)` }}
+        aria-label={`Relacja: ${fromTitle} do ${toTitle}`}
+        title={`${fromTitle} → ${toTitle} · kliknij, aby zaznaczyć`}
+        onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
+        onClick={(event) => { event.stopPropagation(); setSelectedNodeId(""); setSelectedEdgeId(edge.id); setConnectionFromId(""); setShowInspector(false); }}
+      >
         <span className="edge-line" />
         {edge.label && <span className="edge-label" style={{ transform: `rotate(${-angle}deg)` }}>{edge.label}</span>}
-      </div>
+      </button>
     );
   };
 
   const renderModel = () => (
-    <div className={`canvas-shell ${panDrag ? "panning" : ""}`} ref={canvasRef} onPointerDown={handleCanvasPointerDown} onPointerMove={handlePointerMove} onPointerUp={stopCanvasDrag} onPointerCancel={stopCanvasDrag}>
+    <div className={`canvas-shell ${panDrag ? "panning" : ""} ${connectionFromId ? "connecting" : ""}`} ref={canvasRef} onPointerDown={handleCanvasPointerDown} onPointerMove={handlePointerMove} onPointerUp={stopCanvasDrag} onPointerCancel={stopCanvasDrag}>
       <div className="canvas-dots" />
+      {connectionFromId && <div className="model-connection-banner"><span>⌁</span><div><strong>{label("Wybierz blok docelowy", "Choose a target block")}</strong><small>{label("Łączenie od", "Connecting from")} „{nodes.find((node) => node.id === connectionFromId)?.title}”</small></div><button onClick={() => setConnectionFromId("")}>{label("Anuluj", "Cancel")}</button></div>}
+      {selectedNode && !connectionFromId && <div className="model-selection-toolbar"><div><span className={`node-${selectedNode.kind}`}>{kindMeta[selectedNode.kind].icon}</span><strong>{selectedNode.title}</strong></div><button onClick={() => setShowInspector(true)}>{label("Edytuj", "Edit")}</button><button onClick={() => startConnection()}>⌁ {label("Połącz", "Connect")}</button><button onClick={duplicateSelectedNode}>{label("Duplikuj", "Duplicate")}</button><button className="danger" onClick={removeSelectedNode}>{label("Usuń", "Delete")}</button></div>}
+      {selectedEdge && <div className="model-selection-toolbar edge-selection"><div><span>⌁</span><strong>{nodes.find((node) => node.id === selectedEdge.from)?.title} → {nodes.find((node) => node.id === selectedEdge.to)?.title}</strong></div><button onClick={reverseSelectedEdge}>{label("Odwróć", "Reverse")}</button><button className="danger" onClick={() => removeEdgeById(selectedEdge.id)}>{label("Usuń relację", "Delete relation")}</button></div>}
       <div className="canvas-stage" style={{ width: Math.max(1120, getGraphBounds(nodes).maxX + 100), height: Math.max(600, getGraphBounds(nodes).maxY + 100), transform: `translate3d(${canvasPan.x}px, ${canvasPan.y}px, 0) scale(${zoom})` }}>
         {edges.map(renderEdge)}
         {nodes.map((node) => (
           <button
             key={node.id}
-            className={`model-node node-${node.kind} ${selectedNodeId === node.id ? "selected" : ""}`}
+            className={`model-node node-${node.kind} ${selectedNodeId === node.id ? "selected" : ""} ${drag?.id === node.id ? "dragging" : ""}`}
             style={{ left: node.x, top: node.y }}
             onPointerDown={(event) => handlePointerDown(event, node)}
-            onClick={() => setSelectedNodeId(node.id)}
-            aria-label={`${kindMeta[node.kind].label}: ${node.title}`}
+            onPointerMove={handleNodePointerMove}
+            onPointerUp={stopNodeDrag}
+            onPointerCancel={stopNodeDrag}
+            onClick={() => { if (!connectionFromId) { setSelectedNodeId(node.id); setSelectedEdgeId(""); setShowInspector(true); } }}
+            onDoubleClick={() => { setSelectedNodeId(node.id); setShowInspector(true); }}
+            title={label("Przeciągnij, aby przenieść · kliknij, aby edytować", "Drag to move · click to edit")}
+            aria-label={`${kindLabel(node.kind)}: ${node.title}`}
           >
             <span className="node-icon">{kindMeta[node.kind].icon}</span>
             <span className="node-copy"><strong>{node.title}</strong><small>{node.subtitle}</small></span>
@@ -806,12 +1238,14 @@ export default function EyesOfOdin() {
           </button>
         ))}
       </div>
-      {!nodes.length && <div className="empty-workspace-state"><span>▦</span><strong>Pusty projekt</strong><p>Wczytaj plik danych, aby utworzyć źródło, model i pierwsze wykresy.</p><button className="primary-button" onClick={() => chartFileRef.current?.click()}>Wczytaj plik danych</button></div>}
+      {!nodes.length && <div className="empty-workspace-state"><span>▦</span><strong>{label("Pusty projekt", "Empty project")}</strong><p>{label("Wczytaj plik danych, aby utworzyć źródło, model i pierwsze wykresy.", "Load a data file to create a source, model and first charts.")}</p><button className="primary-button" onClick={() => chartFileRef.current?.click()}>{label("Wczytaj plik danych", "Load data file")}</button></div>}
+      {hasDataset && nodes.length > 0 && nodes.length <= 2 && <div className="model-builder-guide"><div><span>{label("START MODELU", "MODEL START")}</span><strong>{label("Zbuduj pierwszy model na aktualnych danych", "Build your first model from the current data")}</strong><small>{label("Utworzymy formułę z dwóch zmiennych, policzymy jej średnią i pokażemy wynik. Każdy krok możesz później zmienić.", "We will create a formula from two variables, calculate its average and show the result. You can edit every step later.")}</small></div><button onClick={buildFormulaExample}>⚡ {label("Zbuduj przykład z danych", "Build an example from data")}</button><i>{label("albo dodawaj bloki po lewej: Transformacja → Metryka → Wynik", "or add blocks on the left: Transformation → Metric → Result")}</i></div>}
       <div className="canvas-controls">
-        <button onClick={() => setZoom((value) => Math.min(1.2, value + 0.1))} aria-label="Powiększ">+</button>
+        <button onClick={() => setZoom((value) => Math.min(1.2, value + 0.1))} aria-label={label("Powiększ", "Zoom in")}>+</button>
         <span>{Math.round(zoom * 100)}%</span>
-        <button onClick={() => setZoom((value) => Math.max(0.6, value - 0.1))} aria-label="Pomniejsz">−</button>
-        <button className="fit-button" onClick={fitModel} aria-label="Dopasuj model" title="Dopasuj model do ekranu">⌗</button>
+        <button onClick={() => setZoom((value) => Math.max(0.6, value - 0.1))} aria-label={label("Pomniejsz", "Zoom out")}>−</button>
+        <button className="fit-button" onClick={fitModel} aria-label={label("Dopasuj model", "Fit model")} title={label("Dopasuj model do ekranu", "Fit model to screen")}>⌗</button>
+        <button className="undo-button" disabled={!lastModelAction} onClick={restoreLastModelAction} aria-label={label("Cofnij usunięcie", "Undo deletion")} title={label("Cofnij usunięcie (Ctrl+Z)", "Undo deletion (Ctrl+Z)")}>↶</button>
       </div>
       <div className="mini-map" aria-hidden="true">
         {nodes.map((node) => <span key={node.id} className={`mini-node mini-${node.kind}`} style={{ left: node.x / 8, top: node.y / 7 }} />)}
@@ -825,25 +1259,27 @@ export default function EyesOfOdin() {
         <div>
           <span className="eyebrow">DATA STUDIO</span>
           <h2>{hasDataset ? datasetName : "Brak wczytanych danych"}</h2>
-          <p>{hasDataset ? `${datasetMeta.totalRows.toLocaleString("pl-PL")} wierszy · ${headers.length} kolumn · dane przetwarzane lokalnie` : "Wczytaj plik, aby zobaczyć podgląd i jakość danych."}</p>
+          <p>{hasDataset
+            ? `${datasetMeta.totalRows.toLocaleString(preferences.language === "en" ? "en-US" : "pl-PL")} ${label("wierszy", "rows")} · ${headers.length} ${label("kolumn", "fields")}${datasetMeta.layout === "long-pivoted" ? ` · ${label("automatycznie ułożono", "automatically arranged")} ${datasetMeta.sourceRows?.toLocaleString(preferences.language === "en" ? "en-US" : "pl-PL") ?? ""} ${label("rekordów Tag/Value", "Tag/Value records")}` : datasetMeta.layout === "transposed" ? label(" · automatycznie odwrócono tabelę tagów", " · tag table transposed automatically") : ""} · ${label("dane przetwarzane lokalnie", "data processed locally")}`
+            : label("Wczytaj plik, aby zobaczyć podgląd i jakość danych.", "Load a file to preview the data and its quality.")}</p>
         </div>
         <div className="view-heading-actions">
-          <button className="secondary-button" disabled={!hasDataset} onClick={() => setView("charts")}>Twórz wykresy</button>
+          <button className="secondary-button" disabled={!hasDataset} onClick={() => setView("charts")}>{label("Twórz wykresy", "Create charts")}</button>
           <label className="primary-button file-button">
-            Wczytaj plik danych
+            {label("Wczytaj plik danych", "Load data file")}
             <input type="file" accept={DATA_FILE_ACCEPT} onChange={handleFile} />
           </label>
         </div>
       </div>
       {fileError && <div className="error-banner">{fileError}</div>}
-      {!hasDataset ? <div className="empty-data-state"><span>▦</span><strong>Tu pojawią się Twoje dane</strong><p>Aplikacja nie ładuje już żadnych przykładowych rekordów. Wybierz własny plik, aby rozpocząć.</p><label className="primary-button file-button">Wczytaj plik danych<input type="file" accept={DATA_FILE_ACCEPT} onChange={handleFile} /></label></div> : <>
+      {!hasDataset ? <div className="empty-data-state"><span>▦</span><strong>{label("Tu pojawią się Twoje dane", "Your data will appear here")}</strong><p>{label("Aplikacja nie ładuje już żadnych przykładowych rekordów. Wybierz własny plik, aby rozpocząć.", "The app does not load sample records. Choose your own file to begin.")}</p><label className="primary-button file-button">{label("Wczytaj plik danych", "Load data file")}<input type="file" accept={DATA_FILE_ACCEPT} onChange={handleFile} /></label></div> : <>
       <div className="quality-grid">
-        <article><span>Kompletność</span><strong>{Math.round((profiles.reduce((sum, item) => sum + item.filled, 0) / Math.max(1, rows.length * headers.length)) * 100)}%</strong><small>uzupełnionych pól</small></article>
-        <article><span>Kolumny liczbowe</span><strong>{profiles.filter((item) => item.type === "number").length}</strong><small>gotowe do obliczeń</small></article>
-        <article><span>Problemy krytyczne</span><strong className="good">0</strong><small>model można uruchomić</small></article>
+        <article><span>{label("Kompletność", "Completeness")}</span><strong>{Math.round((profiles.reduce((sum, item) => sum + item.filled, 0) / Math.max(1, rows.length * headers.length)) * 100)}%</strong><small>{label("uzupełnionych pól", "fields completed")}</small></article>
+        <article><span>{label("Kolumny liczbowe", "Numeric fields")}</span><strong>{profiles.filter((item) => item.type === "number").length}</strong><small>{label("gotowe do obliczeń", "ready for calculations")}</small></article>
+        <article><span>{label("Problemy krytyczne", "Critical issues")}</span><strong className="good">0</strong><small>{label("model można uruchomić", "model can run")}</small></article>
       </div>
       <div className="data-table-card">
-        <div className="table-title"><strong>Podgląd danych</strong><span>Pierwsze {Math.min(rows.length, 8)} wierszy</span></div>
+        <div className="table-title"><strong>{label("Podgląd danych", "Data preview")}</strong><span>{label("Pierwsze", "First")} {Math.min(rows.length, 8)} {label("wierszy", "rows")}</span></div>
         <div className="table-scroll">
           <table>
             <thead><tr>{headers.map((header) => <th key={header}>{header}<small>{profiles.find((item) => item.name === header)?.type}</small></th>)}</tr></thead>
@@ -856,90 +1292,124 @@ export default function EyesOfOdin() {
   );
 
   const renderDataRequired = (title: string, description: string) => (
-    <div className="data-required-view"><span>▦</span><strong>{title}</strong><p>{description}</p><button className="primary-button" onClick={() => chartFileRef.current?.click()}>Wczytaj plik danych</button></div>
+    <div className="data-required-view"><span>▦</span><strong>{title}</strong><p>{description}</p><button className="primary-button" onClick={() => chartFileRef.current?.click()}>{label("Wczytaj plik danych", "Load data file")}</button></div>
   );
 
-  const renderPaths = () => (
-    <div className="paths-view">
-      <div className="view-heading compact-heading">
-        <div><span className="eyebrow">DECISION MAP</span><h2>Ścieżka aktywnego scenariusza</h2><p>Kliknij wybór, aby natychmiast przeliczyć wynik.</p></div>
-        <div className="path-code"><span>{scenario.choices.pricing}</span><i>→</i><span>{scenario.choices.campaign}</span><i>→</i><span>{scenario.choices.market}</span></div>
-      </div>
-      <div className="decision-flow">
-        <DecisionStage number="01" title="Strategia ceny" selected={scenario.choices.pricing} options={[
-          { id: "1", title: "Bez zmiany ceny", detail: "Stabilny popyt" },
-          { id: "2", title: "Cena premium +8%", detail: "Wyższa marża" },
-        ]} onChoose={(value) => updateChoice("pricing", value)} />
-        <div className="flow-arrow">→</div>
-        <DecisionStage number="04" title="Typ kampanii" selected={scenario.choices.campaign} options={[
-          { id: "4", title: "Performance", detail: "Szybka konwersja" },
-          { id: "5", title: "Budowa marki", detail: "Wolniejszy wzrost" },
-        ]} onChoose={(value) => updateChoice("campaign", value)} />
-        <div className="flow-arrow">→</div>
-        <DecisionStage number="09" title="Ekspansja" selected={scenario.choices.market} options={[
-          { id: "9", title: "Rynek DACH", detail: "Duży potencjał" },
-          { id: "10", title: "Rynek lokalny", detail: "Niższe ryzyko" },
-        ]} onChoose={(value) => updateChoice("market", value)} />
-        <div className="flow-arrow">→</div>
-        <div className="path-result-card">
-          <span>WYNIK ŚCIEŻKI</span>
-          <strong>{formatMoney(metrics.profit)}</strong>
-          <small>zysku miesięcznie</small>
-          <div className={metrics.profit >= baselineMetrics.profit ? "delta positive" : "delta negative"}>
-            {metrics.profit >= baselineMetrics.profit ? "+" : ""}{((metrics.profit / baselineMetrics.profit - 1) * 100).toFixed(1)}% vs bazowy
-          </div>
-        </div>
-      </div>
-      <div className="path-insight">
-        <div className="insight-pulse">✦</div>
-        <div><strong>Dlaczego wynik się zmienił?</strong><p>Ścieżka {scenario.choices.pricing} → {scenario.choices.campaign} → {scenario.choices.market} zwiększa liczbę klientów do {metrics.customers.toLocaleString("pl-PL")}, ale dodaje koszt ekspansji. Największy wpływ ma obecnie wybór rynku.</p></div>
-      </div>
-    </div>
-  );
-
-  const renderCompare = () => {
-    const rowsToCompare = [
-      { label: "Przychód", base: baselineMetrics.revenue, current: metrics.revenue, money: true },
-      { label: "Koszt", base: baselineMetrics.cost, current: metrics.cost, money: true },
-      { label: "Zysk", base: baselineMetrics.profit, current: metrics.profit, money: true },
-      { label: "Klienci", base: baselineMetrics.customers, current: metrics.customers, money: false },
-    ];
-    const exportComparison = () => {
-      const csv = [
-        ["metryka", "scenariusz_bazowy", scenario.name, "roznica_procent"],
-        ...rowsToCompare.map((item) => [item.label, item.base, item.current, ((item.current / item.base - 1) * 100).toFixed(2)]),
-      ].map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\r\n");
-      downloadTextFile(`eyes-of-odin-${scenario.id}-porownanie.csv`, `\uFEFF${csv}`);
-      setToast("Pobrano raport porównania");
-    };
+  const renderPaths = () => {
+    const fields = [...new Set(charts.flatMap((chart) => [chart.xField, ...chart.yFields, chart.seriesField].filter((field): field is string => Boolean(field))))];
+    const filterCount = charts.reduce((sum, chart) => sum + chart.filters.length, 0);
+    const modelSteps = nodes.filter((node) => node.kind !== "source");
     return (
-      <div className="compare-view">
-        <div className="view-heading compact-heading"><div><span className="eyebrow">COMPARE</span><h2>Bazowy vs {scenario.name}</h2><p>Jedno miejsce do oceny efektów i kosztów decyzji.</p></div><button className="secondary-button" onClick={exportComparison}>Eksportuj raport</button></div>
-        <div className="compare-summary">
-          <div><span>Zmiana zysku</span><strong className={metrics.profit >= baselineMetrics.profit ? "good" : "bad"}>{metrics.profit >= baselineMetrics.profit ? "+" : ""}{formatMoney(metrics.profit - baselineMetrics.profit)}</strong></div>
-          <div><span>Zmiana klientów</span><strong>+{(metrics.customers - baselineMetrics.customers).toLocaleString("pl-PL")}</strong></div>
-          <div><span>Ryzyko scenariusza</span><strong>{metrics.risk.toFixed(0)}/100</strong></div>
+      <div className="paths-view lineage-view">
+        <div className="view-heading compact-heading">
+          <div><span className="eyebrow">DATA FLOW</span><h2>{label("Przepływ aktualnych danych", "Current data flow")}</h2><p>{label("Każdy element poniżej pochodzi z wczytanego pliku i bieżącej konfiguracji.", "Every item below comes from the loaded file and current configuration.")}</p></div>
+          <div className="lineage-health"><i /> {datasetMeta.totalRows.toLocaleString(preferences.language === "en" ? "en-US" : "pl-PL")} {label("rekordów", "records")} · {headers.length} {label("kolumn", "fields")}</div>
         </div>
-        <div className="compare-card">
-          <div className="compare-header"><span>Metryka</span><span>Scenariusz bazowy</span><span>{scenario.name}</span><span>Różnica</span></div>
-          {rowsToCompare.map((item) => {
-            const max = Math.max(item.base, item.current);
-            const diff = item.current / item.base - 1;
-            return <div className="compare-row" key={item.label}>
-              <strong>{item.label}</strong>
-              <div className="bar-cell"><span style={{ width: `${(item.base / max) * 88}%` }} /><small>{item.money ? formatCompact(item.base) : Math.round(item.base).toLocaleString("pl-PL")}</small></div>
-              <div className="bar-cell active"><span style={{ width: `${(item.current / max) * 88}%` }} /><small>{item.money ? formatCompact(item.current) : Math.round(item.current).toLocaleString("pl-PL")}</small></div>
-              <em className={diff >= 0 ? "positive-text" : "negative-text"}>{diff >= 0 ? "+" : ""}{(diff * 100).toFixed(1)}%</em>
-            </div>;
-          })}
+        <div className="lineage-flow">
+          <article className="lineage-card source"><span>01 · {label("ŹRÓDŁO", "SOURCE")}</span><strong>{datasetName}</strong><p>{datasetMeta.format.toUpperCase()} · {formatBytes(datasetMeta.fileSize)} · {label("dane lokalne", "local data")}</p><div>{headers.slice(0, 5).map((header) => <small key={header}>{header}</small>)}{headers.length > 5 && <small>+{headers.length - 5}</small>}</div></article>
+          <div className="lineage-arrow">→</div>
+          <article className="lineage-card process"><span>02 · {label("OPERACJE", "OPERATIONS")}</span><strong>{modelSteps.length + filterCount + charts.length} {label("aktywnych kroków", "active steps")}</strong><p>{filterCount ? `${filterCount} ${label("filtrów", "filters")}` : label("Bez filtrów", "No filters")} · {modelSteps.length ? `${modelSteps.length} ${label("bloków modelu", "model blocks")}` : label("bez dodatkowego modelu", "no additional model")}</p><div>{[...new Set(charts.map((chart) => chart.aggregation))].map((aggregation) => <small key={aggregation}>{aggregation}</small>)}{fields.slice(0, 3).map((field) => <small key={field}>{field}</small>)}</div></article>
+          <div className="lineage-arrow">→</div>
+          <article className="lineage-card output"><span>03 · {label("WYNIKI", "RESULTS")}</span><strong>{charts.length} {label(charts.length === 1 ? "wykres" : "wykresy", charts.length === 1 ? "chart" : "charts")}</strong><p>{fields.length} {label("używanych pól", "fields used")} · {label("pulpit", "dashboard")} {dashboardGrid}</p><div>{charts.slice(0, 4).map((chart) => <button key={chart.id} onClick={() => setView("charts")}>{chart.title}</button>)}{charts.length === 0 && <small>{label("Dodaj wykres, aby utworzyć wynik", "Add a chart to create a result")}</small>}</div></article>
+        </div>
+        <div className="lineage-details">
+          <div><span>{label("Używane kolumny", "Fields used")}</span><strong>{fields.length}</strong><p>{fields.length ? fields.join(" · ") : label("Żaden wykres nie korzysta jeszcze z kolumn pliku.", "No chart uses file fields yet.")}</p></div>
+          <div><span>{label("Relacje modelu", "Model relationships")}</span><strong>{edges.length}</strong><p>{edges.length ? label("Połączenia pochodzą z aktualnego grafu modelu.", "Connections come from the current model graph.") : label("Brak zdefiniowanych relacji — dane płyną bezpośrednio do wykresów.", "No relationships are defined — data flows directly to charts.")}</p></div>
+          <div><span>{label("Przechowywanie", "Storage")}</span><strong>{label("Lokalne", "Local")}</strong><p>{label("Plik oraz obliczenia pozostają na tym komputerze.", "The file and calculations stay on this computer.")}</p></div>
         </div>
       </div>
     );
   };
 
-  const explorerVisible = view !== "charts" && showExplorer;
-  const inspectorVisible = view === "model" && showInspector && Boolean(selectedNode);
-  const bottomVisible = hasDataset && view !== "charts" && bottomPanelMode !== "collapsed";
+  const renderCompare = () => {
+    const numeric = profiles.filter((profile) => profile.type === "number");
+    const groupable = profiles.filter((profile) => profile.unique > 1);
+    const leftField = numeric.some((profile) => profile.name === comparisonLeftField) ? comparisonLeftField : numeric[0]?.name ?? "";
+    const rightField = numeric.some((profile) => profile.name === comparisonRightField && profile.name !== leftField) ? comparisonRightField : numeric.find((profile) => profile.name !== leftField)?.name ?? "";
+    const metricField = numeric.some((profile) => profile.name === comparisonMetricField) ? comparisonMetricField : numeric[0]?.name ?? "";
+    const groupingProfiles = groupable.filter((profile) => profile.name !== metricField);
+    const groupField = groupingProfiles.some((profile) => profile.name === comparisonGroupField) ? comparisonGroupField : groupingProfiles[0]?.name ?? "";
+    const groupValues = groupField ? getGroupValues(rows, groupField) : [];
+    const leftGroup = groupValues.includes(comparisonLeftGroup) ? comparisonLeftGroup : groupValues[0] ?? "";
+    const rightGroup = groupValues.includes(comparisonRightGroup) && comparisonRightGroup !== leftGroup ? comparisonRightGroup : groupValues.find((value) => value !== leftGroup) ?? "";
+    const canCompare = comparisonMode === "columns" ? Boolean(leftField && rightField) : Boolean(metricField && groupField && leftGroup && rightGroup);
+    const result = canCompare
+      ? comparisonMode === "columns"
+        ? compareColumns(rows, leftField, rightField, comparisonAggregation)
+        : compareGroups(rows, metricField, groupField, leftGroup, rightGroup, comparisonAggregation)
+      : null;
+    const max = result ? Math.max(Math.abs(result.leftValue), Math.abs(result.rightValue), 1) : 1;
+    const locale = preferences.language === "en" ? "en-US" : "pl-PL";
+    const formatValue = (value: number) => new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value);
+    const aggregationLabels: Record<Aggregation, string> = { sum: label("Suma", "Sum"), average: label("Średnia", "Average"), min: "Minimum", max: "Maximum", count: label("Liczba rekordów", "Record count") };
+    const exportComparison = () => {
+      if (!result) return;
+      const csv = [
+        ["źródło", datasetName],
+        ["obliczenie", aggregationLabels[comparisonAggregation]],
+        ["wariant", result.leftLabel, result.rightLabel, "różnica", "różnica_procent"],
+        ["wartość", result.leftValue, result.rightValue, result.difference, result.percent?.toFixed(2) ?? ""],
+      ].map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\r\n");
+      downloadTextFile(`eyes-of-odin-${datasetId}-porownanie.csv`, `\uFEFF${csv}`);
+      setToast(label("Pobrano porównanie aktualnych danych", "Current-data comparison downloaded"));
+    };
+    return (
+      <div className="compare-view data-compare-view">
+        <div className="view-heading compact-heading"><div><span className="eyebrow">COMPARE</span><h2>{label("Porównaj wartości z pliku", "Compare values from the file")}</h2><p>{label("Wybierz kolumny albo grupy — wynik przelicza się natychmiast.", "Choose fields or groups — the result recalculates immediately.")}</p></div><button className="secondary-button" disabled={!result} onClick={exportComparison}>{label("Eksportuj raport", "Export report")}</button></div>
+        <section className="compare-config">
+          <div className="compare-mode-tabs"><button className={comparisonMode === "columns" ? "active" : ""} disabled={numeric.length < 2} onClick={() => setComparisonMode("columns")}>{label("Dwie kolumny", "Two fields")}</button><button className={comparisonMode === "groups" ? "active" : ""} disabled={!numeric.length || !groupingProfiles.length} onClick={() => setComparisonMode("groups")}>{label("Dwie grupy lub okresy", "Two groups or periods")}</button></div>
+          <div className="compare-fields">
+            {comparisonMode === "columns" ? <>
+              <label>{label("Wartość bazowa", "Baseline value")}<select value={leftField} onChange={(event) => setComparisonLeftField(event.target.value)}>{numeric.map((profile) => <option key={profile.name}>{profile.name}</option>)}</select></label>
+              <label>{label("Wartość porównywana", "Compared value")}<select value={rightField} onChange={(event) => setComparisonRightField(event.target.value)}>{numeric.filter((profile) => profile.name !== leftField).map((profile) => <option key={profile.name}>{profile.name}</option>)}</select></label>
+            </> : <>
+              <label>{label("Metryka", "Metric")}<select value={metricField} onChange={(event) => setComparisonMetricField(event.target.value)}>{numeric.map((profile) => <option key={profile.name}>{profile.name}</option>)}</select></label>
+              <label>{label("Podział według", "Group by")}<select value={groupField} onChange={(event) => { setComparisonGroupField(event.target.value); setComparisonLeftGroup(""); setComparisonRightGroup(""); }}>{groupingProfiles.map((profile) => <option key={profile.name}>{profile.name}</option>)}</select></label>
+              <label>{label("Grupa bazowa", "Baseline group")}<select value={leftGroup} onChange={(event) => setComparisonLeftGroup(event.target.value)}>{groupValues.map((value) => <option key={value}>{value}</option>)}</select></label>
+              <label>{label("Grupa porównywana", "Compared group")}<select value={rightGroup} onChange={(event) => setComparisonRightGroup(event.target.value)}>{groupValues.filter((value) => value !== leftGroup).map((value) => <option key={value}>{value}</option>)}</select></label>
+            </>}
+            <label>{label("Obliczenie", "Calculation")}<select value={comparisonAggregation} onChange={(event) => setComparisonAggregation(event.target.value as Aggregation)}>{Object.entries(aggregationLabels).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
+          </div>
+        </section>
+        {!result ? <div className="comparison-empty"><strong>{label("Potrzebne są co najmniej dwie wartości do porównania", "At least two values are needed for comparison")}</strong><p>{label("Wybierz inny tryb albo wczytaj plik zawierający kolumny liczbowe i grupujące.", "Choose a different mode or load a file with numeric and grouping fields.")}</p></div> : <>
+          <div className="compare-summary">
+            <div><span>{label("Różnica wartości", "Value difference")}</span><strong className={result.difference >= 0 ? "good" : "bad"}>{result.difference >= 0 ? "+" : ""}{formatValue(result.difference)}</strong></div>
+            <div><span>{label("Zmiana procentowa", "Percentage change")}</span><strong className={(result.percent ?? 0) >= 0 ? "good" : "bad"}>{result.percent == null ? "—" : `${result.percent >= 0 ? "+" : ""}${result.percent.toFixed(1)}%`}</strong></div>
+            <div><span>{label("Uwzględnione rekordy", "Included records")}</span><strong>{result.leftRecords.toLocaleString(locale)} / {result.rightRecords.toLocaleString(locale)}</strong></div>
+          </div>
+          <div className="compare-card">
+            <div className="compare-header"><span>{label("Obliczenie", "Calculation")}</span><span>{result.leftLabel}</span><span>{result.rightLabel}</span><span>{label("Różnica", "Difference")}</span></div>
+            <div className="compare-row"><strong>{aggregationLabels[comparisonAggregation]}</strong><div className="bar-cell"><span style={{ width: `${(Math.abs(result.leftValue) / max) * 88}%` }} /><small>{formatValue(result.leftValue)}</small></div><div className="bar-cell active"><span style={{ width: `${(Math.abs(result.rightValue) / max) * 88}%` }} /><small>{formatValue(result.rightValue)}</small></div><em className={result.difference >= 0 ? "positive-text" : "negative-text"}>{result.difference >= 0 ? "+" : ""}{formatValue(result.difference)}</em></div>
+          </div>
+          <div className="comparison-source-note"><span>▦</span><div><strong>{label("Źródło obliczenia", "Calculation source")}: {datasetName}</strong><p>{label("Zmiana wyboru, agregacji albo ponowne wczytanie pliku automatycznie aktualizuje wartości.", "Changing the selection, aggregation, or reloading the file updates values automatically.")}</p></div></div>
+        </>}
+      </div>
+    );
+  };
+
+  const openModelBuild = (nodeId?: string) => {
+    setView("model");
+    setModelMode("build");
+    if (nodeId) { setSelectedNodeId(nodeId); setShowInspector(true); }
+  };
+  const openModelSimulation = () => { setView("model"); setModelMode("simulate"); setShowInspector(false); };
+  const openHelpDestination = (destination: HelpDestination) => {
+    setHelpOpen(false);
+    if (destination === "settings") { setSettingsOpen(true); return; }
+    if (destination === "simulation") { openModelSimulation(); return; }
+    if (destination === "model") { openModelBuild(); return; }
+    if (destination === "diagnostics") { setView("paths"); return; }
+    setView(destination);
+  };
+  const renderDiagnostics = () => <DiagnosticStudio rows={rows} columns={profiles.map(({ name, type }) => ({ name, type }))} datasetName={datasetName} sampled={datasetMeta.sampled} nodes={nodes} edges={edges} dependencyRules={dependencyRules} modelParameters={modelParameters} scenario={whatIfScenarios.find((item) => item.id === activeWhatIfId) ?? whatIfScenarios[0]} preferences={diagnosticPreferences} onPreferencesChange={setDiagnosticPreferences} onCustomize={() => { setModelSettingsTab("diagnostics"); setModelSettingsOpen(true); }} onOpenModel={openModelBuild} onOpenSimulation={openModelSimulation} />;
+  const renderWhatIf = () => <WhatIfStudio rows={modelRows} columns={profiles.map(({ name, type }) => ({ name, type }))} scenarios={whatIfScenarios} activeScenarioId={activeWhatIfId} sampled={datasetMeta.sampled} nodes={nodes} edges={edges} dependencyRules={dependencyRules} modelParameters={modelParameters} modelMemory={modelMemory} onChange={setWhatIfScenarios} onActiveChange={setActiveWhatIfId} onDependencyChange={setDependencyRules} />;
+  const renderVerification = () => <ModelVerificationStudio rows={modelRows} columns={profiles.map(({ name, type }) => ({ name, type }))} nodes={nodes} edges={edges} dependencyRules={dependencyRules} modelParameters={modelParameters} scenario={whatIfScenarios.find((item) => item.id === activeWhatIfId) ?? whatIfScenarios[0]} sampled={datasetMeta.sampled} preferences={verificationPreferences} onPreferencesChange={setVerificationPreferences} onCustomize={() => { setModelSettingsTab("checklist"); setModelSettingsOpen(true); }} onOpenBuild={openModelBuild} onOpenSimulation={openModelSimulation} onOpenDiagnostics={() => setView("paths")} />;
+  void renderPaths;
+  void renderCompare;
+
+  const explorerVisible = view === "model" && modelMode === "build" && showExplorer;
+  const inspectorVisible = view === "model" && modelMode === "build" && showInspector && Boolean(selectedNode);
+  const bottomVisible = hasDataset && view === "model" && modelMode === "build" && bottomPanelMode !== "collapsed";
   const gridClasses = [
     "main-grid",
     view === "charts" ? "charts-mode focus-mode" : "",
@@ -974,7 +1444,7 @@ export default function EyesOfOdin() {
         />
         {fileError && <div className="home-error"><span>!</span>{fileError}<button onClick={() => setFileError("")}>×</button></div>}
         {renderImportProgress()}
-        {pendingWorkbook && <div className="sheet-picker-backdrop"><div className="sheet-picker"><span className="eyebrow">ARKUSZE PLIKU</span><h3>Wybierz arkusz do wczytania</h3><p>{pendingWorkbook.file.name}</p><div>{pendingWorkbook.sheets.map((sheet) => <button key={sheet} onClick={() => { const file = pendingWorkbook.file; setPendingWorkbook(null); void performImport(file, sheet); }}><span>▦</span><strong>{sheet}</strong><i>›</i></button>)}</div><button className="secondary-button" onClick={() => setPendingWorkbook(null)}>Anuluj</button></div></div>}
+        {pendingWorkbook && <div className="sheet-picker-backdrop"><div className="sheet-picker"><span className="eyebrow">{label("ARKUSZE PLIKU", "FILE SHEETS")}</span><h3>{label("Wybierz arkusz do wczytania", "Choose a sheet to load")}</h3><p>{pendingWorkbook.file.name}</p><div>{pendingWorkbook.sheets.map((sheet) => <button key={sheet} onClick={() => { const file = pendingWorkbook.file; setPendingWorkbook(null); void performImport(file, sheet); }}><span>▦</span><strong>{sheet}</strong><i>›</i></button>)}</div><button className="secondary-button" onClick={() => setPendingWorkbook(null)}>{label("Anuluj", "Cancel")}</button></div></div>}
       </main>
     );
   }
@@ -983,10 +1453,10 @@ export default function EyesOfOdin() {
     <main className="app-shell">
       <input ref={chartFileRef} className="global-file-input" type="file" accept={DATA_FILE_ACCEPT} onChange={handleFile} />
       <header className="topbar">
-        <button className="brand brand-button" onClick={() => setHomeOpen(true)} title="Wróć do strony głównej"><span className="brand-mark"><i /><i /><i /></span><strong>EYES OF ODIN</strong><small>SCENARIO STUDIO</small></button>
-        <div className="project-breadcrumb"><span>{preferences.language === "en" ? "Projects" : "Projekty"}</span><i>/</i><strong>{workspaceActive ? (preferences.language === "en" ? "Sales growth model" : "Model wzrostu sprzedaży") : (preferences.language === "en" ? "New project" : "Nowy projekt")}</strong><span className="saved-dot">{workspaceActive ? `● ${t("saved")}` : (preferences.language === "en" ? "empty" : "pusty")}</span></div>
+        <button className="brand brand-button" onClick={() => setHomeOpen(true)} title={label("Wróć do strony głównej", "Back to home")}><span className="brand-mark"><i /><i /><i /></span><strong>EYES OF ODIN</strong><small>SCENARIO STUDIO</small></button>
+        <div className="project-breadcrumb"><span>{preferences.language === "en" ? "Projects" : "Projekty"}</span><i>/</i><input className="project-name-input" aria-label={label("Nazwa projektu", "Project name")} title={label("Kliknij, aby zmienić nazwę projektu", "Click to rename the project")} value={projectName} onChange={(event) => setProjectName(event.target.value)} /><span className="saved-dot">{workspaceActive ? `● ${t("saved")}` : (preferences.language === "en" ? "empty" : "pusty")}</span></div>
         <button className="command-trigger" onClick={() => setCommandOpen(true)}><span>⌕</span> {t("search")} <kbd>Ctrl K</kbd></button>
-        <div className="top-actions"><button aria-label="Notifications" title="Notifications" onClick={() => setToast(preferences.language === "en" ? "No new notifications" : "Brak nowych powiadomień")}>○</button><button className="run-button" disabled={!hasDataset} onClick={() => { setBottomTab("results"); setBottomPanelMode("normal"); setToast(preferences.language === "en" ? "Model recalculated" : "Model przeliczony"); }}>▶ {t("run")}</button></div>
+        <div className="top-actions"><button aria-label="Notifications" title="Notifications" onClick={() => setToast(preferences.language === "en" ? "No new notifications" : "Brak nowych powiadomień")}>○</button><button className="run-button" disabled={!hasDataset} onClick={runModel}>▶ {t("run")}</button></div>
       </header>
 
       <aside className="activity-bar">
@@ -999,8 +1469,8 @@ export default function EyesOfOdin() {
 
       <section className="workbench">
         <div className="tabs-row">
-          <div className="document-tabs"><button className={view === "model" ? "active" : ""} onClick={() => setView("model")}><span className="tab-glyph">◇</span> {workspaceActive ? "model_wzrostu.odin" : "nowy_projekt.odin"}</button>{hasDataset && <button className={view === "data" ? "active" : ""} onClick={() => setView("data")}><span className="csv-glyph">▦</span> {datasetName}</button>}{hasDataset && <button className={view === "charts" ? "active" : ""} onClick={() => setView("charts")}><span className="chart-glyph">▥</span> pulpit_wykresów</button>}</div>
-          <div className="scenario-switcher"><span>SCENARIUSZ</span><select value={scenarioId} onChange={(event) => setScenarioId(event.target.value)}>{scenarios.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button onClick={createScenario} aria-label="Dodaj scenariusz">＋</button></div>
+          <div className="document-tabs"><button className={view === "model" ? "active" : ""} onClick={() => setView("model")}><span className="tab-glyph">◇</span> {modelFileName(modelName)}</button>{hasDataset && <button className={view === "data" ? "active" : ""} onClick={() => setView("data")}><span className="csv-glyph">▦</span> {datasetName}</button>}{hasDataset && <button className={view === "charts" ? "active" : ""} onClick={() => setView("charts")}><span className="chart-glyph">▥</span> pulpit_wykresów</button>}</div>
+          {scenarioModelAvailable ? <div className="scenario-switcher"><span>{label("SCENARIUSZ", "SCENARIO")}</span><select value={scenarioId} onChange={(event) => setScenarioId(event.target.value)}>{scenarios.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button onClick={createScenario} aria-label={label("Dodaj scenariusz", "Add scenario")}>＋</button></div> : <div className="dataset-context"><span>{label("AKTYWNE DANE", "ACTIVE DATA")}</span><strong>{hasDataset ? datasetName : label("Brak pliku", "No file")}</strong></div>}
         </div>
 
         <div
@@ -1012,81 +1482,126 @@ export default function EyesOfOdin() {
           } as CSSProperties}
         >
           {explorerVisible && <aside className="explorer-panel">
-            <div className="panel-title"><span>EKSPLORATOR</span><button aria-label="Ukryj eksplorator" title="Ukryj eksplorator (Ctrl+B)" onClick={() => setShowExplorer(false)}>×</button></div>
+            <div className="panel-title"><span>{label("EKSPLORATOR", "EXPLORER")}</span><button aria-label={label("Ukryj eksplorator", "Hide explorer")} title={label("Ukryj eksplorator (Ctrl+B)", "Hide explorer (Ctrl+B)")} onClick={() => setShowExplorer(false)}>×</button></div>
             <div className="project-tree">
-              <div className="tree-project"><span>⌄</span><strong>MODEL WZROSTU</strong></div>
-              {hasDataset && <button className={view === "data" ? "tree-active" : ""} onClick={() => setView("data")}><i className="tree-line" /><span className="csv-glyph">▦</span><span>{datasetName}</span><small>{datasetMeta.totalRows}</small></button>}
-              <div className="tree-group"><span>⌄</span> Wizualizacje</div>
-              {hasDataset ? <button onClick={() => setView("charts")}><i className="tree-line" /><span className="chart-glyph">▥</span><span>Pulpit wykresów</span><small>{charts.length}</small></button> : <div className="tree-empty">Brak danych i wykresów</div>}
-              <div className="tree-group"><span>⌄</span> Modele</div>
-              <button className={view === "model" ? "tree-active" : ""} onClick={() => setView("model")}><i className="tree-line" /><span>◇</span><span>Model wzrostu</span></button>
-              <div className="tree-group"><span>⌄</span> Scenariusze</div>
-              {scenarios.map((item) => <button key={item.id} className={scenarioId === item.id ? "tree-active" : ""} onClick={() => setScenarioId(item.id)}><i className="tree-line" /><span className={item.id === "baseline" ? "base-dot" : "variant-dot"}>●</span><span>{item.name}</span></button>)}
+              <div className="tree-project"><span>⌄</span><input aria-label={label("Nazwa projektu w eksploratorze", "Project name in explorer")} value={projectName} onChange={(event) => setProjectName(event.target.value)} /></div>
+              {hasDataset && <button onClick={() => setView("data")}><i className="tree-line" /><span className="csv-glyph">▦</span><span>{datasetName}</span><small>{datasetMeta.totalRows}</small></button>}
+              <div className="tree-group"><span>⌄</span> {label("Wizualizacje", "Visualizations")}</div>
+              {hasDataset ? <button onClick={() => setView("charts")}><i className="tree-line" /><span className="chart-glyph">▥</span><span>{label("Pulpit wykresów", "Chart dashboard")}</span><small>{charts.length}</small></button> : <div className="tree-empty">{label("Brak danych i wykresów", "No data or charts")}</div>}
+              <div className="tree-group"><span>⌄</span> {label("Modele", "Models")}</div>
+              <div className={`tree-model-name ${view === "model" ? "tree-active" : ""}`}><i className="tree-line" /><button aria-label={label("Otwórz model", "Open model")} onClick={() => setView("model")}>◇</button><input aria-label={label("Nazwa modelu", "Model name")} value={modelName} onChange={(event) => setModelName(event.target.value)} /></div>
+              {scenarioModelAvailable && <><div className="tree-group"><span>⌄</span> {label("Scenariusze", "Scenarios")}</div>{scenarios.map((item) => <button key={item.id} className={scenarioId === item.id ? "tree-active" : ""} onClick={() => setScenarioId(item.id)}><i className="tree-line" /><span className={item.id === "baseline" ? "base-dot" : "variant-dot"}>●</span><span>{item.name}</span></button>)}</>}
             </div>
-            <div className="library-title"><span>BLOKI MODELU</span><small>przeciągnij lub kliknij</small></div>
+            <div className="library-title"><span>{label("BLOKI MODELU", "MODEL BLOCKS")}</span><small>{label("przeciągnij lub kliknij", "drag or click")}</small></div>
             <div className="block-library">
-              {(Object.keys(kindMeta) as NodeKind[]).map((kind) => <button key={kind} onClick={() => addNode(kind)}><span className={`block-icon node-${kind}`}>{kindMeta[kind].icon}</span><span><strong>{kindMeta[kind].label}</strong><small>{kind === "source" ? "Pliki, arkusze, Parquet" : kind === "decision" ? "Rozgałęź ścieżkę" : kind === "metric" ? "Oblicz wynik" : "Przetwórz dane"}</small></span><i>＋</i></button>)}
+              {(Object.keys(kindMeta) as NodeKind[]).map((kind) => <button key={kind} onClick={() => addNode(kind)}><span className={`block-icon node-${kind}`}>{kindMeta[kind].icon}</span><span><strong>{kindLabel(kind)}</strong><small>{kind === "source" ? label("Pliki, arkusze, Parquet", "Files, sheets, Parquet") : kind === "decision" ? label("Rozgałęź ścieżkę", "Branch the path") : kind === "metric" ? label("Oblicz wynik", "Calculate a result") : label("Przetwórz dane", "Process data")}</small></span><i>＋</i></button>)}
             </div>
-            <label className="import-drop"><span>＋</span><strong>Dodaj dane</strong><small>13 formatów · do 2 GB</small><input type="file" accept={DATA_FILE_ACCEPT} onChange={handleFile} /></label>
+            <label className="import-drop"><span>＋</span><strong>{label("Dodaj dane", "Add data")}</strong><small>{label("13 formatów · do 2 GB", "13 formats · up to 2 GB")}</small><input type="file" accept={DATA_FILE_ACCEPT} onChange={handleFile} /></label>
           </aside>}
-          {explorerVisible && <div className="workspace-resizer explorer-resizer" role="separator" aria-label="Zmień szerokość eksploratora" aria-orientation="vertical" aria-valuenow={Math.round(explorerWidth)} onPointerDown={(event) => startPanelResize(event, "explorer")} onPointerMove={handlePanelResize} onPointerUp={stopPanelResize} onPointerCancel={stopPanelResize} />}
+          {explorerVisible && <div className="workspace-resizer explorer-resizer" role="separator" aria-label={label("Zmień szerokość eksploratora", "Resize explorer")} aria-orientation="vertical" aria-valuenow={Math.round(explorerWidth)} onPointerDown={(event) => startPanelResize(event, "explorer")} onPointerMove={handlePanelResize} onPointerUp={stopPanelResize} onPointerCancel={stopPanelResize} />}
 
           <section className="center-stage">
-            {view !== "charts" && <div className="stage-toolbar">
-              <div><button className={showExplorer ? "active" : ""} onClick={() => setShowExplorer((visible) => !visible)}>☰ {t("explorer")}</button>{view === "model" && <button className={showInspector ? "active" : ""} disabled={!selectedNode} onClick={() => setShowInspector((visible) => !visible)}>☷ {t("inspector")}</button>}<button className={bottomPanelMode !== "collapsed" ? "active" : ""} disabled={!hasDataset} onClick={() => setBottomPanelMode((mode) => mode === "collapsed" ? "normal" : "collapsed")}>▤ {t("resultsPanel")}</button><span />{view === "model" && <><button onClick={() => addNode("transform")}>＋ {t("block")}</button><button disabled={!nodes.length} onClick={arrangeModel}>⌘ {t("arrange")}</button><button disabled={nodes.length < 2} onClick={() => setToast(preferences.language === "en" ? "Select two elements to create a relation" : "Wybierz dwa elementy, aby utworzyć relację")}>⌁ {t("relation")}</button></>}</div>
-              <div className="model-health"><i /> {nodes.length ? "Model gotowy" : "Pusty model"} <span>·</span> {nodes.length} bloków <span>·</span> {edges.length} relacji</div>
+            {view === "model" && <div className="stage-toolbar">
+              <div className="model-mode-tabs" role="tablist" aria-label={preferences.language === "en" ? "Model workspace mode" : "Tryb pracy modelu"}><button role="tab" aria-selected={modelMode === "build"} className={modelMode === "build" ? "active" : ""} onClick={() => setModelMode("build")}><span>01</span> {preferences.language === "en" ? "Build" : "Budowa"}</button><button role="tab" aria-selected={modelMode === "simulate"} className={modelMode === "simulate" ? "active" : ""} disabled={!hasDataset} onClick={() => setModelMode("simulate")}><span>02</span> {preferences.language === "en" ? "Simulation" : "Symulacja"}</button><button role="tab" aria-selected={modelMode === "verify"} className={modelMode === "verify" ? "active" : ""} disabled={!hasDataset} onClick={() => setModelMode("verify")}><span>03</span> {preferences.language === "en" ? "Verification" : "Weryfikacja"}</button></div>
+              {modelMode === "build" && <div className="stage-toolbar-actions"><button className={showExplorer ? "active" : ""} onClick={() => setShowExplorer((visible) => !visible)}>☰ {t("explorer")}</button><button className={showInspector ? "active" : ""} disabled={!selectedNode} onClick={() => setShowInspector((visible) => !visible)}>☷ {t("inspector")}</button><button className={bottomPanelMode !== "collapsed" ? "active" : ""} disabled={!hasDataset} onClick={() => setBottomPanelMode((mode) => mode === "collapsed" ? "normal" : "collapsed")}>▤ {t("resultsPanel")}</button><span /><button className={modelMemory.some((entry) => entry.enabled && entry.useInModel) ? "active" : ""} title={preferences.language === "en" ? `${modelMemory.length} saved memory entries` : `${modelMemory.length} zapisanych wpisów pamięci`} onClick={() => { setModelSettingsTab("parameters"); setModelSettingsOpen(true); }}>⚙ {preferences.language === "en" ? "Parameters & memory" : "Parametry i pamięć"}{modelMemory.length ? ` · ${modelMemory.length}` : ""}</button><div className="model-block-picker"><button className={blockMenuOpen ? "active" : ""} onClick={() => setBlockMenuOpen((open) => !open)}>＋ {t("block")}</button>{blockMenuOpen && <div className="model-block-menu">{(Object.keys(kindMeta) as NodeKind[]).map((kind) => <button key={kind} onClick={() => { addNode(kind); setBlockMenuOpen(false); }}><span className={`node-${kind}`}>{kindMeta[kind].icon}</span><div><strong>{kindLabel(kind)}</strong><small>{kind === "source" ? label("Nowe źródło danych", "New data source") : kind === "transform" ? label("Formuła lub zmiana", "Formula or change") : kind === "decision" ? label("Próg i alert", "Threshold and alert") : kind === "metric" ? label("Obliczenie", "Calculation") : label("Końcowy rezultat", "Final result")}</small></div></button>)}</div>}</div><button disabled={!nodes.length} onClick={arrangeModel}>⌘ {t("arrange")}</button><button className={connectionFromId ? "active" : ""} disabled={nodes.length < 2} onClick={() => connectionFromId ? setConnectionFromId("") : startConnection()}>⌁ {connectionFromId ? (preferences.language === "en" ? "Cancel relation" : "Anuluj relację") : t("relation")}</button><button disabled={!lastModelAction} onClick={restoreLastModelAction} title={preferences.language === "en" ? "Undo deletion (Ctrl+Z)" : "Cofnij usunięcie (Ctrl+Z)"}>↶ {preferences.language === "en" ? "Undo" : "Cofnij"}</button></div>}
+              <div className={`model-health ${scenarioModelAvailable || modelValidation.ready ? "ready" : "not-ready"}`}><i /> {scenarioModelAvailable || modelValidation.ready ? label("Model gotowy", "Model ready") : nodes.length ? label("Model wymaga konfiguracji", "Model needs configuration") : label("Pusty model", "Empty model")} <span>·</span> {nodes.length} {label("bloków", "blocks")} <span>·</span> {edges.length} {label("relacji", "relations")}</div>
             </div>}
-            {view === "model" && renderModel()}
+            {view === "model" && modelMode === "build" && renderModel()}
+            {view === "model" && modelMode === "simulate" && (hasDataset ? renderWhatIf() : renderDataRequired(label("Brak symulacji", "No simulation"), label("Wczytaj dane, aby utworzyć wariant modelu.", "Load data to create a model variant.")))}
+            {view === "model" && modelMode === "verify" && (hasDataset ? renderVerification() : renderDataRequired(label("Brak weryfikacji", "No verification"), label("Wczytaj dane, aby sprawdzić gotowość modelu.", "Load data to verify model readiness.")))}
             {view === "data" && renderData()}
-            {view === "charts" && (hasDataset ? <ChartStudio key={datasetId} rows={rows} columns={profiles.map(({ name, type }) => ({ name, type }))} datasetId={datasetId} datasetName={datasetName} charts={charts} onChartsChange={setCharts} onImport={() => chartFileRef.current?.click()} onToast={setToast} sampled={datasetMeta.sampled} totalRows={datasetMeta.totalRows} grid={dashboardGrid} templates={templates} defaultTemplateId={defaultTemplateId} onGridChange={setDashboardGrid} onTemplatesChange={setTemplates} onDefaultTemplateChange={setDefaultTemplateId} /> : renderDataRequired("Brak wykresów", "Najpierw wczytaj plik danych."))}
-            {view === "paths" && (hasDataset ? renderPaths() : renderDataRequired("Brak ścieżek", "Ścieżki pojawią się po wczytaniu danych i zbudowaniu modelu."))}
-            {view === "compare" && (hasDataset ? renderCompare() : renderDataRequired("Brak porównania", "Wczytaj dane, aby porównywać scenariusze."))}
+            {view === "charts" && (hasDataset ? <ChartStudio key={datasetId} rows={rows} columns={profiles.map(({ name, type }) => ({ name, type }))} datasetId={datasetId} datasetName={datasetName} charts={charts} onChartsChange={setCharts} onImport={() => chartFileRef.current?.click()} onToast={setToast} sampled={datasetMeta.sampled} totalRows={datasetMeta.totalRows} grid={dashboardGrid} templates={templates} defaultTemplateId={defaultTemplateId} onGridChange={setDashboardGrid} onTemplatesChange={setTemplates} onDefaultTemplateChange={setDefaultTemplateId} /> : renderDataRequired(label("Brak wykresów", "No charts"), label("Najpierw wczytaj plik danych.", "Load a data file first.")))}
+            {view === "paths" && (hasDataset ? renderDiagnostics() : renderDataRequired(label("Brak diagnostyki", "No diagnostics"), label("Wczytaj plik, aby sprawdzić jakość, zależności i wartości odstające.", "Load a file to inspect quality, relationships and outliers.")))}
           </section>
 
           {inspectorVisible && selectedNode && <aside className="inspector-panel">
-            <div className="panel-title"><span>INSPEKTOR</span><button aria-label="Zamknij inspektor" onClick={() => setShowInspector(false)}>×</button></div>
-            <div className="selected-summary"><span className={`large-node-icon node-${selectedNode.kind}`}>{kindMeta[selectedNode.kind].icon}</span><div><small>{kindMeta[selectedNode.kind].label.toUpperCase()}</small><strong>{selectedNode.title}</strong></div></div>
-            <div className="inspector-section open"><div className="section-heading"><span>⌄</span><strong>Właściwości</strong></div><label>Nazwa<input value={selectedNode.title} onChange={(event) => changeSelectedTitle(event.target.value)} /></label><label>Opis<textarea value={selectedNode.subtitle} onChange={(event) => setNodes((current) => current.map((node) => node.id === selectedNode.id ? { ...node, subtitle: event.target.value } : node))} /></label></div>
-            <div className="inspector-section open scenario-controls"><div className="section-heading"><span>⌄</span><strong>Parametry scenariusza</strong></div>
-              <RangeControl label="Zmiana ceny" value={scenario.priceChange} min={-20} max={30} suffix="%" onChange={(priceChange) => updateScenario({ priceChange })} />
-              <RangeControl label="Budżet marketingu" value={scenario.marketingChange} min={-40} max={80} suffix="%" onChange={(marketingChange) => updateScenario({ marketingChange })} />
-              <RangeControl label="Zmiana konwersji" value={scenario.conversionChange} min={-20} max={40} suffix="%" onChange={(conversionChange) => updateScenario({ conversionChange })} />
+            <div className="panel-title"><span>{label("INSPEKTOR", "INSPECTOR")}</span><button aria-label={label("Zamknij inspektor", "Close inspector")} onClick={() => setShowInspector(false)}>×</button></div>
+            <div className="selected-summary"><span className={`large-node-icon node-${selectedNode.kind}`}>{kindMeta[selectedNode.kind].icon}</span><div><small>{kindLabel(selectedNode.kind).toUpperCase()}</small><strong>{selectedNode.title}</strong></div></div>
+            <div className="inspector-section open"><div className="section-heading"><span>⌄</span><strong>{label("Właściwości", "Properties")}</strong></div><label>{label("Nazwa", "Name")}<input value={selectedNode.title} onChange={(event) => changeSelectedTitle(event.target.value)} /></label><label>{label("Opis", "Description")}<textarea value={selectedNode.subtitle} onChange={(event) => setNodes((current) => current.map((node) => node.id === selectedNode.id ? { ...node, subtitle: event.target.value } : node))} /></label></div>
+            {scenarioModelAvailable && <div className="inspector-section open scenario-controls"><div className="section-heading"><span>⌄</span><strong>{label("Parametry scenariusza", "Scenario parameters")}</strong></div>
+              <RangeControl label={label("Zmiana ceny", "Price change")} value={scenario.priceChange} min={-20} max={30} suffix="%" onChange={(priceChange) => updateScenario({ priceChange })} />
+              <RangeControl label={label("Budżet marketingu", "Marketing budget")} value={scenario.marketingChange} min={-40} max={80} suffix="%" onChange={(marketingChange) => updateScenario({ marketingChange })} />
+              <RangeControl label={label("Zmiana konwersji", "Conversion change")} value={scenario.conversionChange} min={-20} max={40} suffix="%" onChange={(conversionChange) => updateScenario({ conversionChange })} />
+            </div>}
+            {!scenarioModelAvailable && selectedNode.kind === "decision" && <div className="inspector-section open model-rule-controls"><div className="section-heading"><span>⌄</span><strong>{label("Reguła monitorowania", "Monitoring rule")}</strong></div>
+              <label>{label("Kolumna wartości", "Value field")}<select value={selectedNode.config?.field ?? ""} onChange={(event) => updateSelectedConfig({ field: event.target.value })}><option value="">{label("Wybierz pole…", "Choose a field…")}</option>{modelNumericFields.map((field) => <option key={field} value={field}>{field}</option>)}</select></label>
+              <label>{label("Kolumna czasu", "Time field")}<select value={selectedNode.config?.timeField ?? ""} onChange={(event) => updateSelectedConfig({ timeField: event.target.value })}><option value="">{label("Wybierz pole…", "Choose a field…")}</option>{profiles.filter((profile) => profile.type === "date").map((profile) => <option key={profile.name} value={profile.name}>{profile.name}</option>)}</select></label>
+              <label>{label("Rodzaj progu", "Threshold type")}<select value={selectedNode.config?.thresholdMode ?? "percentile"} onChange={(event) => updateSelectedConfig({ thresholdMode: event.target.value as ModelNodeConfig["thresholdMode"] })}><option value="percentile">{label("Percentyl", "Percentile")}</option><option value="manual">{label("Wartość ręczna", "Manual value")}</option></select></label>
+              {(selectedNode.config?.thresholdMode ?? "percentile") === "percentile" ? <label>{label("Percentyl", "Percentile")}<select value={selectedNode.config?.percentile ?? 90} onChange={(event) => updateSelectedConfig({ percentile: Number(event.target.value) })}><option value="75">P75</option><option value="90">P90</option><option value="95">P95</option><option value="99">P99</option></select></label> : <label>{label("Wartość graniczna", "Boundary value")}<input type="number" value={selectedNode.config?.thresholdValue ?? ""} onChange={(event) => updateSelectedConfig({ thresholdValue: event.target.value === "" ? undefined : Number(event.target.value) })} /></label>}
+              <label>{label("Przekroczenie", "Violation")}<select value={selectedNode.config?.direction ?? "above"} onChange={(event) => updateSelectedConfig({ direction: event.target.value as ModelNodeConfig["direction"] })}><option value="above">{label("Powyżej progu", "Above threshold")}</option><option value="below">{label("Poniżej progu", "Below threshold")}</option></select></label>
+              <label>{label("Poziom alertu", "Alert level")}<select value={selectedNode.config?.severity ?? "warning"} onChange={(event) => updateSelectedConfig({ severity: event.target.value as ModelNodeConfig["severity"] })}><option value="info">{label("Informacja", "Information")}</option><option value="warning">{label("Ostrzeżenie", "Warning")}</option><option value="critical">{label("Krytyczne", "Critical")}</option></select></label>
+            </div>}
+            {!scenarioModelAvailable && (selectedNode.kind === "metric" || selectedNode.kind === "result") && <div className="inspector-section open model-rule-controls"><div className="section-heading"><span>⌄</span><strong>{label("Reguła obliczenia", "Calculation rule")}</strong><small>fx</small></div>
+              {selectedNode.kind === "result" && nodes.some((node) => node.kind === "decision") && <label>{label("Reguła źródłowa", "Source rule")}<select value={selectedNode.config?.sourceRuleId ?? ""} onChange={(event) => updateSelectedConfig({ sourceRuleId: event.target.value || undefined })}><option value="">{label("Pierwsza pasująca reguła", "First matching rule")}</option>{nodes.filter((node) => node.kind === "decision").map((node) => <option key={node.id} value={node.id}>{node.title}</option>)}</select></label>}
+              <label>{label("Źródło wartości", "Value source")}<select value={selectedNode.config?.formula !== undefined ? "formula" : "column"} onChange={(event) => updateSelectedConfig(event.target.value === "formula" ? { formula: modelNumericFields[0] ? `[${modelNumericFields[0]}]` : "", field: undefined } : { formula: undefined, field: modelNumericFields[0] })}><option value="column">{label("Jedna kolumna", "One field")}</option><option value="formula">{label("Własna formuła", "Custom formula")}</option></select></label>
+              {selectedNode.config?.formula === undefined ? <label>{label("Kolumna z danych", "Data field")}<select value={selectedNode.config?.field ?? ""} onChange={(event) => updateSelectedConfig({ field: event.target.value || undefined })}><option value="">{label("Wybierz kolumnę…", "Choose a field…")}</option>{modelNumericFields.map((field) => <option key={field} value={field}>{field}{profiles.find((profile) => profile.name === field)?.unique === 1 ? label(" (wartość stała)", " (constant value)") : ""}</option>)}</select></label> : <>
+                <label>{label("Formuła", "Formula")}<textarea className="formula-editor" value={selectedNode.config.formula} onChange={(event) => updateSelectedConfig({ formula: event.target.value })} placeholder={label("np. [Przychód] - [Koszt]", "e.g. [Revenue] - [Cost]")} /></label>
+                <div className="formula-field-chips"><span>{label("Wstaw kolumnę:", "Insert field:")}</span>{modelNumericFields.slice(0, 8).map((field) => <button key={field} onClick={() => updateSelectedConfig({ formula: `${selectedNode.config?.formula ?? ""}${selectedNode.config?.formula ? " " : ""}[${field}]` })}>{field}</button>)}</div>
+                {modelParameters.length > 0 && <div className="formula-field-chips parameter-chips"><span>{label("Wstaw parametr:", "Insert parameter:")}</span>{modelParameters.map((parameter) => <button key={parameter.id} title={parameter.description} onClick={() => updateSelectedConfig({ formula: `${selectedNode.config?.formula ?? ""}${selectedNode.config?.formula ? " " : ""}{{${parameter.name}}}` })}>{parameter.name} = {parameter.value}{parameter.unit}</button>)}</div>}
+                <div className={`formula-preview ${selectedFormulaPreview?.error && !selectedFormulaPreview.validCount ? "error" : ""}`}><span>{label("Podgląd na pierwszych rekordach", "Preview on the first records")}</span><strong>{selectedFormulaPreview?.average == null ? "—" : selectedFormulaPreview.average.toLocaleString(preferences.language === "en" ? "en-US" : "pl-PL", { maximumFractionDigits: 3 })}</strong><small>{selectedFormulaPreview?.validCount ?? 0} {label("poprawnych wartości", "valid values")}{selectedFormulaPreview?.error ? ` · ${selectedFormulaPreview.error}` : ""}</small></div>
+              </>}
+              <label>{label("Sposób obliczenia", "Calculation method")}<select value={selectedNode.config?.calculation ?? "average"} onChange={(event) => updateSelectedConfig({ calculation: event.target.value as ModelNodeConfig["calculation"] })}><option value="average">{label("Średnia", "Average")}</option><option value="sum">{label("Suma", "Sum")}</option><option value="minimum">Minimum</option><option value="maximum">Maximum</option><option value="last">{label("Ostatnia wartość", "Last value")}</option><option value="count">{label("Liczba rekordów", "Record count")}</option>{selectedNode.kind === "result" && nodes.some((node) => node.kind === "decision") && <><option value="violations">{label("Liczba przekroczonych próbek", "Violated sample count")}</option><option value="events">{label("Liczba zdarzeń alarmowych", "Alert event count")}</option></>}</select></label>
+              <p className="inspector-hint">{label("Możesz używać działań +, −, *, /, ^ oraz funkcji abs(), min(), max(), round(), sqrt() i pow().", "You can use +, −, *, /, ^ and abs(), min(), max(), round(), sqrt(), pow().")}</p>
+            </div>}
+            {!scenarioModelAvailable && selectedNode.kind === "transform" && <div className="inspector-section open model-rule-controls"><div className="section-heading"><span>⌄</span><strong>{label("Transformacja danych", "Data transformation")}</strong><small>fx</small></div>
+              <label>{label("Operacja", "Operation")}<select value={selectedNode.config?.transformOperation ?? "none"} onChange={(event) => updateSelectedConfig({ transformOperation: event.target.value as ModelNodeConfig["transformOperation"] })}><option value="formula">{label("Własna formuła", "Custom formula")}</option><option value="add">{label("Dodaj wartość", "Add value")}</option><option value="multiply">{label("Pomnóż przez", "Multiply by")}</option><option value="percent">{label("Zmień procentowo", "Change by percent")}</option></select></label>
+              {(selectedNode.config?.transformOperation ?? "none") !== "formula" && <label>{label("Kolumna wejściowa", "Input field")}<select value={selectedNode.config?.field ?? ""} onChange={(event) => updateSelectedConfig({ field: event.target.value || undefined })}><option value="">{label("Wybierz kolumnę…", "Choose a field…")}</option>{selectedTransformInputFields.map((field) => <option key={field} value={field}>{field}</option>)}</select></label>}
+              {(selectedNode.config?.transformOperation === "add" || selectedNode.config?.transformOperation === "multiply" || selectedNode.config?.transformOperation === "percent") && <label>{label("Wartość zmiany", "Change value")}<input type="number" value={selectedNode.config?.transformValue ?? 0} onChange={(event) => updateSelectedConfig({ transformValue: Number(event.target.value) })} /></label>}
+              {selectedNode.config?.transformOperation === "formula" && <><label>{label("Formuła", "Formula")}<textarea className="formula-editor" value={selectedNode.config?.formula ?? ""} onChange={(event) => updateSelectedConfig({ formula: event.target.value })} placeholder="e.g. [Dancer_Output] - [Dancer_Setpoint]" /></label><div className="formula-field-chips"><span>{label("Wstaw kolumnę:", "Insert field:")}</span>{selectedTransformInputFields.slice(0, 8).map((field) => <button key={field} onClick={() => updateSelectedConfig({ formula: `${selectedNode.config?.formula ?? ""}${selectedNode.config?.formula ? " " : ""}[${field}]` })}>{field}</button>)}</div>{modelParameters.length > 0 && <div className="formula-field-chips parameter-chips"><span>{label("Wstaw parametr:", "Insert parameter:")}</span>{modelParameters.map((parameter) => <button key={parameter.id} title={parameter.description} onClick={() => updateSelectedConfig({ formula: `${selectedNode.config?.formula ?? ""}${selectedNode.config?.formula ? " " : ""}{{${parameter.name}}}` })}>{parameter.name} = {parameter.value}{parameter.unit}</button>)}</div>}<div className={`formula-preview ${selectedFormulaPreview?.error && !selectedFormulaPreview.validCount ? "error" : ""}`}><span>{label("Średni wynik próbki", "Sample average result")}</span><strong>{selectedFormulaPreview?.average == null ? "—" : selectedFormulaPreview.average.toLocaleString(preferences.language === "en" ? "en-US" : "pl-PL", { maximumFractionDigits: 3 })}</strong><small>{selectedFormulaPreview?.validCount ?? 0} {label("poprawnych wartości", "valid values")}{selectedFormulaPreview?.error ? ` · ${selectedFormulaPreview.error}` : ""}</small></div></>}
+              <label>{label("Nazwa nowej kolumny", "New field name")}<input value={selectedNode.config?.outputField ?? ""} onChange={(event) => updateSelectedConfig({ outputField: event.target.value })} placeholder={label("np. Marża_modelu", "e.g. Model_margin")} /></label>
+              <p className="inspector-hint">{label("Ta kolumna będzie dostępna w kolejnych regułach, metrykach i wynikach.", "This field will be available to subsequent rules, metrics and results.")}</p>
+            </div>}
+            {!scenarioModelAvailable && selectedNode.kind === "source" && <div className="inspector-section open"><div className="section-heading"><span>⌄</span><strong>{label("Źródło danych", "Data source")}</strong></div><div className="inspector-source-summary"><span>{label("Plik", "File")}</span><strong>{datasetName}</strong><span>{label("Zakres", "Range")}</span><strong>{datasetMeta.totalRows.toLocaleString(preferences.language === "en" ? "en-US" : "pl-PL")} {label("rekordów", "records")} · {profiles.length} {label("kolumn", "fields")}</strong></div></div>}
+            <div className="inspector-section open connection-controls"><div className="section-heading"><span>⌄</span><strong>{label("Połączenia", "Connections")}</strong><small>{edges.filter((edge) => edge.from === selectedNode.id || edge.to === selectedNode.id).length}</small></div>
+              <div className="connection-list">{edges.filter((edge) => edge.from === selectedNode.id || edge.to === selectedNode.id).map((edge) => { const fromNode = nodes.find((node) => node.id === edge.from); const toNode = nodes.find((node) => node.id === edge.to); return <div className="connection-row" key={edge.id}><button className="connection-focus" onClick={() => { setSelectedNodeId(""); setSelectedEdgeId(edge.id); setShowInspector(false); }}>{fromNode?.title ?? edge.from} <i>→</i> {toNode?.title ?? edge.to}</button><button aria-label={`${label("Usuń relację", "Delete relationship")} ${fromNode?.title ?? edge.from} → ${toNode?.title ?? edge.to}`} title={label("Usuń relację", "Delete relationship")} onClick={() => removeEdgeById(edge.id)}>×</button></div>; })}</div>
+              <label>{label("Połącz z blokiem", "Connect to block")}<select value={connectionTargetId} onChange={(event) => setConnectionTargetId(event.target.value)}><option value="">{label("Wybierz blok…", "Choose a block…")}</option>{nodes.filter((node) => node.id !== selectedNode.id).map((node) => <option key={node.id} value={node.id}>{kindLabel(node.kind)}: {node.title}</option>)}</select></label>
+              <button className="inspector-action" disabled={!connectionTargetId} onClick={addSelectedConnection}>＋ {label("Dodaj połączenie", "Add connection")}</button>
+              <p className="inspector-hint">{label("Dla bloku „Wynik” wybrany element zostanie podłączony jako wejście.", "For a Result block, the selected item will be connected as its input.")}</p>
             </div>
-            <div className="inspector-section"><div className="section-heading"><span>›</span><strong>Reguła obliczenia</strong><small>fx</small></div></div>
-            <div className="inspector-section"><div className="section-heading"><span>›</span><strong>Połączenia</strong><small>{edges.filter((edge) => edge.from === selectedNode.id || edge.to === selectedNode.id).length}</small></div></div>
-            {selectedNode.id !== "source" && <button className="danger-button" onClick={removeSelectedNode}>Usuń element</button>}
+            <div className="inspector-node-actions"><button className="secondary-button" onClick={duplicateSelectedNode}>{label("Duplikuj blok", "Duplicate block")}</button><button className="danger-button" onClick={removeSelectedNode}>{label("Usuń", "Delete")} {selectedNode.kind === "source" ? label("źródło", "source") : label("element", "item")}</button></div>
           </aside>}
-          {inspectorVisible && <div className="workspace-resizer inspector-resizer" role="separator" aria-label="Zmień szerokość inspektora" aria-orientation="vertical" aria-valuenow={Math.round(inspectorWidth)} onPointerDown={(event) => startPanelResize(event, "inspector")} onPointerMove={handlePanelResize} onPointerUp={stopPanelResize} onPointerCancel={stopPanelResize} />}
+          {inspectorVisible && <div className="workspace-resizer inspector-resizer" role="separator" aria-label={label("Zmień szerokość inspektora", "Resize inspector")} aria-orientation="vertical" aria-valuenow={Math.round(inspectorWidth)} onPointerDown={(event) => startPanelResize(event, "inspector")} onPointerMove={handlePanelResize} onPointerUp={stopPanelResize} onPointerCancel={stopPanelResize} />}
 
           {bottomVisible && <section className="bottom-panel">
             <div className="bottom-tabs">
-              <button className={bottomTab === "results" ? "active" : ""} onClick={() => setBottomTab("results")}>WYNIKI <span>4</span></button>
-              <button className={bottomTab === "data" ? "active" : ""} onClick={() => setBottomTab("data")}>DANE</button>
-              <button className={bottomTab === "issues" ? "active" : ""} onClick={() => setBottomTab("issues")}>PROBLEMY <span className="issue-zero">0</span></button>
-              <div className="bottom-actions"><span>Ostatnie przeliczenie: teraz</span><button aria-label={bottomPanelMode === "maximized" ? "Przywróć rozmiar" : "Maksymalizuj"} title={bottomPanelMode === "maximized" ? "Przywróć rozmiar" : "Maksymalizuj"} onClick={() => setBottomPanelMode((mode) => mode === "maximized" ? "normal" : "maximized")}>{bottomPanelMode === "maximized" ? "⌄" : "⌃"}</button><button aria-label="Zamknij panel wyników" title="Zamknij panel wyników (Ctrl+J)" onClick={() => setBottomPanelMode("collapsed")}>×</button></div>
+              <button className={bottomTab === "results" ? "active" : ""} onClick={() => setBottomTab("results")}>{label("WYNIKI", "RESULTS")} <span>{modelExecution?.ready ? modelExecution.outputs.length + modelExecution.rules.length : 0}</span></button>
+              <button className={bottomTab === "data" ? "active" : ""} onClick={() => setBottomTab("data")}>{label("PRZEBIEG", "FLOW")} <span>{nodes.length}</span></button>
+              <button className={bottomTab === "issues" ? "active" : ""} onClick={() => setBottomTab("issues")}>{label("PROBLEMY", "ISSUES")} <span className={modelValidation.issues.length ? "bad" : "issue-zero"}>{scenarioModelAvailable ? 0 : modelValidation.issues.length}</span></button>
+              <div className="bottom-actions"><span>{modelExecution?.executedAt ? `${label("Ostatnie przeliczenie", "Last run")}: ${new Date(modelExecution.executedAt).toLocaleTimeString(preferences.language === "en" ? "en-US" : "pl-PL")}` : label("Model nieuruchomiony", "Model not run")}</span><button aria-label={bottomPanelMode === "maximized" ? label("Przywróć rozmiar", "Restore size") : label("Maksymalizuj", "Maximize")} title={bottomPanelMode === "maximized" ? label("Przywróć rozmiar", "Restore size") : label("Maksymalizuj", "Maximize")} onClick={() => setBottomPanelMode((mode) => mode === "maximized" ? "normal" : "maximized")}>{bottomPanelMode === "maximized" ? "⌄" : "⌃"}</button><button aria-label={label("Zamknij panel wyników", "Close results panel")} title={label("Zamknij panel wyników (Ctrl+J)", "Close results panel (Ctrl+J)")} onClick={() => setBottomPanelMode("collapsed")}>×</button></div>
             </div>
-            {bottomTab === "results" && <div className="metrics-strip">
-              <MetricCard label="Przychód" value={formatMoney(metrics.revenue)} delta={(metrics.revenue / baselineMetrics.revenue - 1) * 100} spark={[38, 43, 41, 48, 54, 62, 69]} />
-              <MetricCard label="Koszt" value={formatMoney(metrics.cost)} delta={(metrics.cost / baselineMetrics.cost - 1) * 100} spark={[35, 36, 42, 45, 51, 49, 56]} />
-              <MetricCard label="Zysk" value={formatMoney(metrics.profit)} delta={(metrics.profit / baselineMetrics.profit - 1) * 100} spark={[28, 31, 39, 42, 51, 62, 74]} featured />
-              <MetricCard label="Marża" value={`${metrics.margin.toFixed(1)}%`} delta={metrics.margin - baselineMetrics.margin} spark={[42, 38, 47, 51, 56, 61, 66]} />
+            {bottomTab === "results" && scenarioModelAvailable && <div className="metrics-strip">
+              <MetricCard label={label("Przychód", "Revenue")} value={formatMoney(metrics.revenue)} delta={(metrics.revenue / baselineMetrics.revenue - 1) * 100} spark={[38, 43, 41, 48, 54, 62, 69]} />
+              <MetricCard label={label("Koszt", "Cost")} value={formatMoney(metrics.cost)} delta={(metrics.cost / baselineMetrics.cost - 1) * 100} spark={[35, 36, 42, 45, 51, 49, 56]} />
+              <MetricCard label={label("Zysk", "Profit")} value={formatMoney(metrics.profit)} delta={(metrics.profit / baselineMetrics.profit - 1) * 100} spark={[28, 31, 39, 42, 51, 62, 74]} featured />
+              <MetricCard label={label("Marża", "Margin")} value={`${metrics.margin.toFixed(1)}%`} delta={metrics.margin - baselineMetrics.margin} spark={[42, 38, 47, 51, 56, 61, 66]} />
             </div>}
-            {bottomTab === "data" && <div className="bottom-message"><strong>{datasetName}</strong><span>{datasetMeta.totalRows.toLocaleString("pl-PL")} wierszy · {headers.length} kolumn · {profiles.filter((item) => item.type === "number").length} pól liczbowych</span><button onClick={() => setView("data")}>Otwórz Data Studio</button></div>}
-            {bottomTab === "issues" && <div className="bottom-message success"><strong>✓ Model nie zawiera problemów blokujących</strong><span>Wszystkie użyte pola są dostępne, a ścieżka ma wynik końcowy.</span></div>}
+            {bottomTab === "results" && !scenarioModelAvailable && modelExecution?.ready && <div className="model-execution-results">
+              <div className="execution-overview"><article><span>{label("Przeliczono", "Processed")}</span><strong>{modelExecution.processedRows.toLocaleString(preferences.language === "en" ? "en-US" : "pl-PL")}</strong><small>{label("rekordów", "records")}</small></article><article><span>{label("Wyniki", "Results")}</span><strong>{modelExecution.outputs.length}</strong><small>{label("metryk i rezultatów", "metrics and outputs")}</small></article><article><span>{label("Alerty", "Alerts")}</span><strong className={modelExecution.rules.some((rule) => rule.eventCount) ? "bad" : "good"}>{modelExecution.rules.reduce((sum, rule) => sum + rule.eventCount, 0)}</strong><small>{label("wykrytych zdarzeń", "events detected")}</small></article><article><span>{label("Czas", "Time")}</span><strong>{(modelExecution.durationMs ?? 0).toFixed(0)} ms</strong><small>{label("lokalnie", "locally")}</small></article></div>
+              <div className="execution-cards">
+                {modelExecution.outputs.map((output) => <article className="execution-card output" key={output.nodeId}><span>{label("WYNIK", "RESULT")}</span><strong>{output.value.toLocaleString(preferences.language === "en" ? "en-US" : "pl-PL", { maximumFractionDigits: 3 })}</strong><b>{output.nodeTitle}</b><small>{output.detail}</small></article>)}
+                {modelExecution.transforms.map((transform) => <article className="execution-card transform" key={transform.nodeId}><span>{label("TRANSFORMACJA", "TRANSFORMATION")}</span><strong>{transform.afterAverage?.toLocaleString(preferences.language === "en" ? "en-US" : "pl-PL", { maximumFractionDigits: 3 }) ?? "—"}</strong><b>{transform.outputField}</b><small>{transform.validCount.toLocaleString(preferences.language === "en" ? "en-US" : "pl-PL")} {label("wartości", "values")}{transform.deltaPercent == null ? "" : ` · ${transform.deltaPercent >= 0 ? "+" : ""}${transform.deltaPercent.toFixed(1)}% ${label("vs wejście", "vs input")}`}</small></article>)}
+                {modelExecution.rules.map((rule) => <article className={`execution-card alert ${rule.eventCount ? "has-alert" : ""}`} key={rule.nodeId}><span>{label("REGUŁA", "RULE")} · {rule.thresholdLabel}</span><strong>{rule.eventCount}</strong><b>{rule.nodeTitle}</b><small>{rule.violationCount} {label("próbek", "samples")} · {label("granica", "boundary")} {rule.boundary.toLocaleString(preferences.language === "en" ? "en-US" : "pl-PL", { maximumFractionDigits: 3 })}{rule.firstEvent ? ` · ${label("od", "from")} ${rule.firstEvent.start}` : ""}</small></article>)}
+                {!modelExecution.outputs.length && !modelExecution.rules.length && <article className="execution-empty"><strong>{label("Model wykonał się, ale nie zwraca wyniku", "The model ran but returns no result")}</strong><span>{label("Dodaj metrykę albo skonfiguruj blok Wynik.", "Add a metric or configure a Result block.")}</span></article>}
+              </div>
+            </div>}
+            {bottomTab === "results" && !scenarioModelAvailable && !modelExecution?.ready && <div className={`model-run-readiness ${modelValidation.ready ? "ready" : "blocked"}`}><div><span>{modelValidation.ready ? label("GOTOWY DO PRZELICZENIA", "READY TO RUN") : label("MODEL WYMAGA UWAGI", "MODEL NEEDS ATTENTION")}</span><strong>{modelValidation.ready ? label("Sprawdź, co wynika z danych i formuł", "See what follows from the data and formulas") : label(`${modelValidation.issues.length} ${modelValidation.issues.length === 1 ? "rzecz blokuje" : "rzeczy blokują"} uruchomienie`, `${modelValidation.issues.length} ${modelValidation.issues.length === 1 ? "issue blocks" : "issues block"} execution`)}</strong><small>{modelValidation.ready ? `${datasetMeta.totalRows.toLocaleString(preferences.language === "en" ? "en-US" : "pl-PL")} ${label("rekordów", "records")} · ${nodes.length} ${label("bloków", "blocks")} · ${label("obliczenia wykonają się lokalnie", "calculations run locally")}` : modelValidation.issues[0]}</small></div><button disabled={!modelValidation.ready} onClick={runModel}>▶ {label("Uruchom model", "Run model")}</button></div>}
+            {bottomTab === "data" && <div className="model-flow-summary"><div className="flow-source"><span>▦</span><strong>{datasetName}</strong><small>{datasetMeta.totalRows.toLocaleString(preferences.language === "en" ? "en-US" : "pl-PL")} {label("rekordów", "records")}</small></div>{nodes.filter((node) => node.kind !== "source").map((node) => <div className={`flow-step node-${node.kind}`} key={node.id}><i>→</i><span>{kindMeta[node.kind].icon}</span><strong>{node.title}</strong><small>{node.subtitle}</small></div>)}<div className="flow-tail"><strong>{modelValidation.ready ? label("Gotowy", "Ready") : label("Niekompletny", "Incomplete")}</strong><small>{modelValidation.ready ? label("Uruchom, aby zobaczyć wyniki", "Run to see results") : label("Otwórz Problemy", "Open Issues")}</small></div></div>}
+            {bottomTab === "issues" && (scenarioModelAvailable || modelValidation.ready ? <div className="bottom-message success"><strong>✓ {label("Model nie zawiera problemów blokujących", "The model has no blocking issues")}</strong><span>{label("Wszystkie użyte kolumny, formuły i połączenia są gotowe do przeliczenia.", "All fields, formulas and connections are ready for calculation.")}</span><button onClick={runModel}>{label("Uruchom ponownie", "Run again")}</button></div> : <div className="model-issues">{modelValidation.issues.map((issue) => <button key={issue} onClick={() => focusModelIssue(issue)}><span>!</span><strong>{issue}</strong><small>{nodes.some((node) => issue.includes(`„${node.title}”`)) ? label("Kliknij, aby otworzyć właściwy blok", "Click to open the relevant block") : label("Sprawdź strukturę modelu", "Review model structure")}</small></button>)}</div>)}
           </section>}
-          {bottomVisible && bottomPanelMode !== "maximized" && <div className="workspace-resizer results-resizer" role="separator" aria-label="Zmień wysokość panelu wyników" aria-orientation="horizontal" aria-valuenow={Math.round(resultsHeight)} onPointerDown={(event) => startPanelResize(event, "results")} onPointerMove={handlePanelResize} onPointerUp={stopPanelResize} onPointerCancel={stopPanelResize} />}
+          {bottomVisible && bottomPanelMode !== "maximized" && <div className="workspace-resizer results-resizer" role="separator" aria-label={label("Zmień wysokość panelu wyników", "Resize results panel")} aria-orientation="horizontal" aria-valuenow={Math.round(resultsHeight)} onPointerDown={(event) => startPanelResize(event, "results")} onPointerMove={handlePanelResize} onPointerUp={stopPanelResize} onPointerCancel={stopPanelResize} />}
         </div>
       </section>
 
       <footer className="statusbar"><div><span>◇ main</span><span>↻</span><span className="status-ok">✓ 0</span><span>△ 0</span></div><div><span>{datasetMeta.totalRows.toLocaleString(locale)} {preferences.language === "en" ? "records" : "rekordów"}</span><span>{preferences.language === "en" ? "local" : "lokalnie"}</span><span>{hasDataset ? datasetMeta.format.toUpperCase() : (preferences.language === "en" ? "NO DATA" : "BRAK DANYCH")}</span><span>Eyes Engine {APP_VERSION}</span><span className="status-live">● {t("ready")}</span></div></footer>
 
       {renderImportProgress()}
-      {pendingWorkbook && <div className="sheet-picker-backdrop"><div className="sheet-picker"><span className="eyebrow">ARKUSZE PLIKU</span><h3>Wybierz arkusz do wczytania</h3><p>{pendingWorkbook.file.name}</p><div>{pendingWorkbook.sheets.map((sheet) => <button key={sheet} onClick={() => { const file = pendingWorkbook.file; setPendingWorkbook(null); void performImport(file, sheet); }}><span>▦</span><strong>{sheet}</strong><i>›</i></button>)}</div><button className="secondary-button" onClick={() => setPendingWorkbook(null)}>Anuluj</button></div></div>}
+      {pendingWorkbook && <div className="sheet-picker-backdrop"><div className="sheet-picker"><span className="eyebrow">{label("ARKUSZE PLIKU", "FILE SHEETS")}</span><h3>{label("Wybierz arkusz do wczytania", "Choose a sheet to load")}</h3><p>{pendingWorkbook.file.name}</p><div>{pendingWorkbook.sheets.map((sheet) => <button key={sheet} onClick={() => { const file = pendingWorkbook.file; setPendingWorkbook(null); void performImport(file, sheet); }}><span>▦</span><strong>{sheet}</strong><i>›</i></button>)}</div><button className="secondary-button" onClick={() => setPendingWorkbook(null)}>{label("Anuluj", "Cancel")}</button></div></div>}
 
-      {toast && <button className="toast" onClick={() => setToast("")}><span>✓</span>{toast}<i>×</i></button>}
-      {commandOpen && <div className="command-backdrop" onMouseDown={() => setCommandOpen(false)}><div className="command-modal" onMouseDown={(event) => event.stopPropagation()}><div className="command-input"><span>⌕</span><input autoFocus value={commandQuery} onChange={(event) => setCommandQuery(event.target.value)} placeholder="Wpisz polecenie…" /><kbd>ESC</kbd></div><div className="command-list"><small>POLECENIA</small>{commands.map((command, index) => <button key={command.label} className={index === 0 ? "active" : ""} onClick={() => { command.action(); setCommandOpen(false); setCommandQuery(""); }}><span>›</span><strong>{command.label}</strong><small>{command.detail}</small></button>)}</div></div></div>}
+      {visibleToast && <button className="toast" onClick={() => setToast("")}><span>✓</span>{visibleToast}<i>×</i></button>}
+      {commandOpen && <div className="command-backdrop" onMouseDown={() => setCommandOpen(false)}><div className="command-modal" onMouseDown={(event) => event.stopPropagation()}><div className="command-input"><span>⌕</span><input autoFocus value={commandQuery} onChange={(event) => setCommandQuery(event.target.value)} placeholder={label("Wpisz polecenie…", "Type a command…")} /><kbd>ESC</kbd></div><div className="command-list"><small>{label("POLECENIA", "COMMANDS")}</small>{commands.map((command, index) => <button key={command.label} className={index === 0 ? "active" : ""} onClick={() => { command.action(); setCommandOpen(false); setCommandQuery(""); }}><span>›</span><strong>{command.label}</strong><small>{command.detail}</small></button>)}</div></div></div>}
       <SettingsDialog open={settingsOpen} showExplorer={showExplorer} showInspector={showInspector} showResults={bottomPanelMode !== "collapsed"} onShowExplorer={setShowExplorer} onShowInspector={setShowInspector} onShowResults={(visible) => setBottomPanelMode(visible ? "normal" : "collapsed")} onClose={() => setSettingsOpen(false)} onRestoreLayout={() => { setShowExplorer(true); setShowInspector(false); setBottomPanelMode("collapsed"); setExplorerWidth(DEFAULT_WORKSPACE_SIZES.explorerWidth); setInspectorWidth(DEFAULT_WORKSPACE_SIZES.inspectorWidth); setResultsHeight(DEFAULT_WORKSPACE_SIZES.resultsHeight); setCanvasPan({ x: 0, y: 0 }); }} />
-      {helpOpen && <div className="app-dialog-backdrop" onMouseDown={() => setHelpOpen(false)}><section className="app-dialog help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-title" onMouseDown={(event) => event.stopPropagation()}><header><div><span className="eyebrow">EYES OF ODIN {APP_VERSION}</span><h2 id="help-title">Pomoc i informacje</h2></div><button aria-label="Zamknij pomoc" onClick={() => setHelpOpen(false)}>×</button></header><p>Lokalne studio wizualizacji, limitów i scenariuszy. Dane nie opuszczają komputera.</p><div className="shortcut-list"><div><kbd>Ctrl K</kbd><span>Paleta poleceń</span></div><div><kbd>Ctrl B</kbd><span>Eksplorator</span></div><div><kbd>Ctrl J</kbd><span>Panel wyników</span></div><div><kbd>Esc</kbd><span>Zamknij okno lub anuluj import</span></div></div><footer><button className="primary-button" onClick={() => setHelpOpen(false)}>Rozumiem</button></footer></section></div>}
+      <ModelSettingsDialog open={modelSettingsOpen} tab={modelSettingsTab} columns={profiles.map(({ name, type }) => ({ name, type }))} parameters={modelParameters} memory={modelMemory} datasetName={datasetName} verification={verificationPreferences} diagnostics={diagnosticPreferences} onParametersChange={setModelParameters} onMemoryChange={setModelMemory} onVerificationChange={setVerificationPreferences} onDiagnosticsChange={setDiagnosticPreferences} onTabChange={setModelSettingsTab} onClose={() => setModelSettingsOpen(false)} />
+      <HelpCenterDialog open={helpOpen} onClose={() => setHelpOpen(false)} onNavigate={openHelpDestination} />
     </main>
   );
 }
@@ -1095,11 +1610,7 @@ function RangeControl({ label, value, min, max, suffix, onChange }: { label: str
   return <label className="range-control"><span><small>{label}</small><strong>{value > 0 ? "+" : ""}{value}{suffix}</strong></span><input type="range" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} style={{ "--range-progress": `${((value - min) / (max - min)) * 100}%` } as React.CSSProperties} /></label>;
 }
 
-function MetricCard({ label, value, delta, spark, featured = false }: { label: string; value: string; delta: number; spark: number[]; featured?: boolean }) {
+function MetricCard({ label, value, delta, detail, spark, featured = false }: { label: string; value: string; delta?: number; detail?: string; spark: number[]; featured?: boolean }) {
   const points = spark.map((point, index) => `${index * 18},${48 - point * 0.45}`).join(" ");
-  return <article className={`metric-card ${featured ? "featured" : ""}`}><div><span>{label}</span><strong>{value}</strong><small className={delta >= 0 ? "positive-text" : "negative-text"}>{delta >= 0 ? "↑" : "↓"} {Math.abs(delta).toFixed(1)}% <em>vs bazowy</em></small></div><div className="sparkline" aria-hidden="true"><svg viewBox="0 0 110 52" preserveAspectRatio="none"><polyline points={points} /></svg></div></article>;
-}
-
-function DecisionStage({ number, title, selected, options, onChoose }: { number: string; title: string; selected: string; options: Array<{ id: string; title: string; detail: string }>; onChoose: (id: string) => void }) {
-  return <section className="decision-stage"><div className="decision-title"><span>{number}</span><strong>{title}</strong></div>{options.map((option) => <button key={option.id} className={selected === option.id ? "selected" : ""} onClick={() => onChoose(option.id)}><span>{selected === option.id ? "✓" : option.id}</span><div><strong>{option.title}</strong><small>{option.detail}</small></div></button>)}</section>;
+  return <article className={`metric-card ${featured ? "featured" : ""}`}><div><span>{label}</span><strong>{value}</strong>{delta != null ? <small className={delta >= 0 ? "positive-text" : "negative-text"}>{delta >= 0 ? "↑" : "↓"} {Math.abs(delta).toFixed(1)}% <em>vs bazowy</em></small> : <small><em>{detail}</em></small>}</div><div className="sparkline" aria-hidden="true"><svg viewBox="0 0 110 52" preserveAspectRatio="none"><polyline points={points} /></svg></div></article>;
 }

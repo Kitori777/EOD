@@ -1,7 +1,8 @@
 "use client";
 
-import { ChangeEvent, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 
+import { useI18n } from "../../../app/i18n/translations";
 import { createDashboardTemplate, isDashboardTemplate, type DashboardGrid, type DashboardTemplate } from "../templates/dashboard-templates";
 import type { ChartDefinition } from "../types/chart-types";
 
@@ -18,21 +19,28 @@ type Props = {
 };
 
 export function TemplateManager({ grid, charts, templates, defaultTemplateId, onGridChange, onTemplatesChange, onDefaultTemplateChange, onApply, onToast }: Props) {
-  const [name, setName] = useState("Mój pulpit");
+  const { language } = useI18n();
+  const tr = (pl: string, en: string) => language === "en" ? en : pl;
+  const [name, setName] = useState(() => language === "en" ? "My dashboard" : "Mój pulpit");
   const [selectedId, setSelectedId] = useState(templates[0]?.id ?? "");
   const fileRef = useRef<HTMLInputElement>(null);
   const selected = templates.find((template) => template.id === selectedId);
+
+  useEffect(() => {
+    if (selectedId && templates.some((template) => template.id === selectedId)) return;
+    setSelectedId(templates[0]?.id ?? "");
+  }, [templates, selectedId]);
 
   const save = () => {
     const template = createDashboardTemplate(name, grid, charts);
     onTemplatesChange([...templates, template]);
     setSelectedId(template.id);
-    onToast(`Zapisano szablon „${template.name}”`);
+    onToast(`${tr("Zapisano szablon", "Saved template")} „${template.name}”`);
   };
   const update = () => {
     if (!selected) return;
     onTemplatesChange(templates.map((template) => template.id === selected.id ? { ...createDashboardTemplate(name || selected.name, grid, charts), id: selected.id, createdAt: selected.createdAt } : template));
-    onToast("Zaktualizowano szablon");
+    onToast(tr("Zaktualizowano szablon", "Template updated"));
   };
   const remove = () => {
     if (!selected) return;
@@ -40,7 +48,7 @@ export function TemplateManager({ grid, charts, templates, defaultTemplateId, on
     onTemplatesChange(next);
     if (defaultTemplateId === selected.id) onDefaultTemplateChange(undefined);
     setSelectedId(next[0]?.id ?? "");
-    onToast("Usunięto szablon");
+    onToast(tr("Usunięto szablon", "Template deleted"));
   };
   const exportTemplate = () => {
     if (!selected) return;
@@ -57,19 +65,19 @@ export function TemplateManager({ grid, charts, templates, defaultTemplateId, on
     if (!file) return;
     try {
       const parsed: unknown = JSON.parse(await file.text());
-      if (!isDashboardTemplate(parsed)) throw new Error("Nieprawidłowy format szablonu.");
+      if (!isDashboardTemplate(parsed)) throw new Error(tr("Nieprawidłowy format szablonu.", "Invalid template format."));
       const imported = { ...parsed, id: `template-${Date.now()}`, name: `${parsed.name} — import` };
       onTemplatesChange([...templates, imported]);
       setSelectedId(imported.id);
-      onToast("Zaimportowano szablon");
+      onToast(tr("Zaimportowano szablon", "Template imported"));
     } catch (error) {
-      onToast(error instanceof Error ? error.message : "Nie udało się zaimportować szablonu");
+      onToast(error instanceof Error ? error.message : tr("Nie udało się zaimportować szablonu", "Could not import the template"));
     }
   };
 
   return <div className="template-toolbar">
-    <div className="grid-picker"><span>WIDOK</span>{([1, 4, 9, "custom"] as DashboardGrid[]).map((value) => <button key={value} className={grid === value ? "active" : ""} onClick={() => onGridChange(value)}>{value === "custom" ? "Własny" : value}</button>)}</div>
-    <div className="template-save"><input aria-label="Nazwa szablonu" value={name} onChange={(event) => setName(event.target.value)} /><button onClick={save}>Zapisz nowy</button><button onClick={update} disabled={!selected}>Aktualizuj</button></div>
-    <div className="template-library"><span>SZABLON</span><select aria-label="Zapisany szablon" value={selectedId} onChange={(event) => { setSelectedId(event.target.value); const template = templates.find((item) => item.id === event.target.value); if (template) setName(template.name); }}><option value="">Brak zapisanych</option>{templates.map((template) => <option value={template.id} key={template.id}>{defaultTemplateId === template.id ? "★ " : ""}{template.name}</option>)}</select><button onClick={() => selected && onApply(selected)} disabled={!selected}>Zastosuj</button><button onClick={() => selected && onDefaultTemplateChange(defaultTemplateId === selected.id ? undefined : selected.id)} disabled={!selected} title="Ustaw jako domyślny">{selected && defaultTemplateId === selected.id ? "★" : "☆"}</button><button onClick={exportTemplate} disabled={!selected}>Eksport</button><button onClick={() => fileRef.current?.click()}>Import</button><button className="template-delete" onClick={remove} disabled={!selected}>×</button><input ref={fileRef} type="file" accept=".json,.odin-template.json,application/json" onChange={importTemplate} /></div>
+    <div className="grid-picker"><span>{tr("WIDOK", "VIEW")}</span>{([1, 4, 9, "custom"] as DashboardGrid[]).map((value) => <button key={value} className={grid === value ? "active" : ""} onClick={() => onGridChange(value)}>{value === "custom" ? tr("Własny", "Custom") : value}</button>)}</div>
+    <div className="template-save"><input aria-label={tr("Nazwa szablonu", "Template name")} value={name} onChange={(event) => setName(event.target.value)} /><button onClick={save}>{tr("Zapisz nowy", "Save new")}</button><button onClick={update} disabled={!selected}>{tr("Aktualizuj", "Update")}</button></div>
+    <div className="template-library"><span>{tr("SZABLON", "TEMPLATE")}</span><select aria-label={tr("Zapisany szablon", "Saved template")} value={selectedId} onChange={(event) => { setSelectedId(event.target.value); const template = templates.find((item) => item.id === event.target.value); if (template) setName(template.name); }}><option value="">{tr("Brak zapisanych", "None saved")}</option>{templates.map((template) => <option value={template.id} key={template.id}>{defaultTemplateId === template.id ? "★ " : ""}{template.name}</option>)}</select><button onClick={() => selected && onApply(selected)} disabled={!selected}>{tr("Zastosuj", "Apply")}</button><button onClick={() => selected && onDefaultTemplateChange(defaultTemplateId === selected.id ? undefined : selected.id)} disabled={!selected} title={tr("Ustaw jako domyślny", "Set as default")}>{selected && defaultTemplateId === selected.id ? "★" : "☆"}</button><button onClick={exportTemplate} disabled={!selected}>{tr("Eksport", "Export")}</button><button onClick={() => fileRef.current?.click()}>{tr("Import", "Import")}</button><button className="template-delete" onClick={remove} disabled={!selected}>×</button><input ref={fileRef} type="file" accept=".json,.odin-template.json,application/json" onChange={importTemplate} /></div>
   </div>;
 }

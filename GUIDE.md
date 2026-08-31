@@ -1,12 +1,12 @@
 # Eyes of Odin — przewodnik aplikacji i projektu
 
-Ten dokument wyjaśnia sposób korzystania z Eyes of Odin 0.1.1 oraz pokazuje, gdzie znajduje się każda mechanika. Jest przeznaczony zarówno dla użytkownika aplikacji, jak i osoby rozwijającej projekt.
+Ten dokument wyjaśnia sposób korzystania z Eyes of Odin 0.1.2 oraz pokazuje, gdzie znajduje się każda mechanika. Jest przeznaczony zarówno dla użytkownika aplikacji, jak i osoby rozwijającej projekt.
 
 ## 1. Czym jest Eyes of Odin
 
 Eyes of Odin to lokalna przestrzeń do eksplorowania danych i sprawdzania konsekwencji zmian. Użytkownik może wczytać plik tekstowy, JSON, skoroszyt albo Parquet, zbudować kilka powiązanych wizualizacji, zawęzić dane do wybranego czasu, ustawić bezpieczne granice oraz modelować warianty „co, jeśli…”.
 
-Wersja 0.1.1 działa bez konta. Dane nie są przesyłane do zewnętrznej usługi.
+Wersja 0.1.2 działa bez konta. Dane nie są przesyłane do zewnętrznej usługi.
 
 ## 2. Główne obszary interfejsu
 
@@ -23,7 +23,17 @@ Pełne panele robocze pojawiają się dopiero po wybraniu zadania. Kliknięcie l
 
 ### Model
 
-Model jest wizualnym grafem zależności. Elementy można dodawać, zaznaczać, przenosić i łączyć w ścieżkę prowadzącą od danych do wyniku.
+Model jest wizualnym i wykonywalnym grafem zależności. Elementy można dodawać, zaznaczać, przenosić i łączyć w ścieżkę prowadzącą od danych do wyniku. Dla plików procesowych podstawowy przepływ `Źródło → Reguła → Wynik` oblicza przekroczenia wartości ręcznej albo percentyla. Status „Model gotowy” pojawia się dopiero po sprawdzeniu pól i połączeń.
+
+Obszar **Model i symulacja** ma trzy powiązane tryby:
+
+- **Budowa** — tworzenie grafu, formuł, decyzji, metryk i wyników,
+- **Symulacja** — zmiana wybranego wejścia bez naruszania pliku źródłowego; wariant przechodzi przez ten sam graf co dane bazowe,
+- **Weryfikacja** — techniczna kontrola jakości danych, poprawności grafu i zakresu aktywnej symulacji, bez oceniania decyzji użytkownika.
+
+Symulacja pokazuje osobno zmianę bezpośrednią, reakcje oszacowane z historii oraz wynik całego modelu. Domyślnie analizuje wszystkie kolumny liczbowe. Każda z nich pozostaje widoczna w tabeli `przed / po zmianie / różnica / różnica % / sposób obliczenia`, również gdy nie wykryto reakcji. Wynikowi towarzyszą R², błąd walidacyjny MAE, informacja o liczbie obserwacji i ostrzeżenie, gdy wariant wychodzi poza zakres danych historycznych. Relacja historyczna jest dopasowywana na wcześniejszej części szeregu, a sprawdzana na późniejszej, więc wynik nie korzysta z przyszłych rekordów podczas uczenia. Dzięki temu korelacja nie jest przedstawiana jako pewny związek przyczynowy.
+
+Nazwę projektu można zmienić bezpośrednio w górnym pasku, a nazwę modelu w Eksploratorze. Obie nazwy są zapisywane razem z lokalną sesją.
 
 Przyciski **Eksplorator**, **Inspektor** i **Wyniki** pozwalają odzyskać miejsce na graf. Inspektor i panel wyników są domyślnie schowane. Ustawienie zostaje zapamiętane lokalnie. Panel wyników można dodatkowo powiększyć przyciskiem w jego prawym górnym rogu.
 
@@ -65,7 +75,7 @@ Visual Lab domyślnie pokazuje wyłącznie pulpit i najważniejsze sterowanie uk
 - porównanie z inną wartością,
 - zwykły filtr danych,
 - zakres czasu od–do,
-- dolny i górny limit,
+- ręczny limit albo linię percentylową P75/P90/P95/P99,
 - rozmiar kafelka.
 
 Każdy kafelek pokazuje ostatnią wartość, średnią i zakres. Rzadziej używane działania — kolejność, rozmiar, duplikowanie i usuwanie — znajdują się w menu `•••`.
@@ -87,6 +97,8 @@ Limit może kontrolować każdą wybraną serię Y. Przykładowy zakres 90–110
 - wartość `< 90` — zdarzenie poniżej limitu,
 - wartość `> 110` — zdarzenie powyżej limitu,
 - 90 i 110 — wartości dopuszczalne.
+
+Tryb **Percentyl** oblicza kreskowaną linię na podstawie aktualnych filtrów i zakresu czasu. Przykładowo P90 jest wartością, poniżej której znajduje się około 90% obserwacji. Użytkownik wybiera, czy alert ma dotyczyć wartości powyżej, czy poniżej linii, oraz ustawia poziom: informacja, ostrzeżenie albo krytyczne.
 
 Tryb **wartość widoczna na wykresie** analizuje wynik agregacji. Tryb **każdy rekord źródłowy** sprawdza surowe wiersze, również te przechowywane poza próbką ekranu.
 
@@ -113,9 +125,15 @@ Szablon zapisuje:
 
 Podczas używania szablonu z innym plikiem aplikacja próbuje dopasować nazwy kolumn. Nierozpoznane pola wymagają jawnego wskazania odpowiednika.
 
-### Ścieżki i porównanie scenariuszy
+### Symulacja i weryfikacja modelu
 
-Ścieżki przedstawiają kolejność decyzji, np. `1 → 4 → 9`. Wariant może zmieniać cenę, marketing, konwersję oraz wybory w poszczególnych punktach. Widok porównania pokazuje różnice między wariantem aktywnym i bazowym. Przycisk **Eksportuj raport** zapisuje aktualne porównanie do pliku CSV.
+W trybie **Symulacja** wybierz kolumnę wejściową, operację, wartość oraz zakres rekordów. Program zachowuje oryginał, tworzy wariant i wykonuje oba zbiory przez ten sam graf. Domyślny tryb **Wszystkie automatycznie** sprawdza po kolei każdą kolumnę liczbową. Możesz przełączyć się na **Własny wybór**, jeśli chcesz ograniczyć analizę. Tabela pokazuje wartości przed i po zmianie, różnicę liczbową i procentową oraz źródło obliczenia. Filtry pozwalają rozdzielić kolumny zmienione i niezmienione, a kliknięcie wiersza otwiera jego wykres porównawczy. Sekcja **Wynik całego modelu** porównuje końcowe metryki oraz liczbę alertów.
+
+Formuły i relacje zbudowane w grafie są źródłem nadrzędnym. Dla pozostałych kolumn aplikacja może pokazać estymację bezpośredniej zależności historycznej, ale zmienia wartość tylko wtedy, gdy walidacja modelu jest wystarczająca. Nie tworzy sztucznego łańcucha korelacji między kolejnymi kolumnami. Kolumny bez potwierdzonej reakcji pozostają w zestawieniu jako **Bez wykrytej zmiany**.
+
+Sekcja **Kontrola ekonometryczna** objaśnia każdą aktywną relację wyuczoną z danych. Pokazuje efekt β, 95-procentowy przedział ufności, p-value, wynik na późniejszej próbie, opóźnienie i zastosowane kontrole. Model ARX uwzględnia wcześniejszą wartość wyniku, dzięki czemu jednorazowa zmiana może działać z opóźnieniem i stopniowo wygasać. Wartości te opisują warunkową reakcję historyczną; nie są automatycznym dowodem związku przyczynowego.
+
+Tryb **Weryfikacja** pokazuje fakty techniczne: czy dane nadają się do obliczeń, czy graf jest wykonywalny oraz czy wariant mieści się w historii użytej do estymacji. Nie przyznaje punktów i nie orzeka, czy plan użytkownika jest dobry. Lista kontrolna prowadzi bezpośrednio do elementu wymagającego poprawy. Pełna **Diagnostyka** rozszerza ten widok o jakość osi czasu, stałe nastawy, nietypowe punkty i zależności wybranego pola.
 
 ### Sterowanie przestrzenią roboczą
 
@@ -249,7 +267,7 @@ Rozmieszczanie elementów należy rozwijać w `src/mechanics/modeling/layout`. F
 ### Publikowanie wydania GitHub
 
 1. Upewnij się, że `package.json`, `src-tauri/tauri.conf.json` i tag mają ten sam numer.
-2. Wypchnij tag, np. `v0.1.1`.
+2. Wypchnij tag, np. `v0.1.2`.
 3. `.github/workflows/release.yml` uruchomi pełną kontrolę jakości i kompilację Tauri.
 4. `scripts/package-release.ps1` przygotuje instalator, portable oraz `SHA256SUMS.txt`.
 5. Workflow utworzy GitHub Release, z którego korzysta `scripts/install.ps1` oraz przycisk pobierania w README.

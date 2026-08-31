@@ -20,7 +20,12 @@ function cloneCharts(charts: ChartDefinition[]): ChartDefinition[] {
     thresholds: (chart.thresholds ?? []).map((rule) => ({ ...rule })),
     comparison: chart.comparison ? { ...chart.comparison } : undefined,
     timeRange: chart.timeRange ? { ...chart.timeRange } : undefined,
+    formula: chart.formula ? { ...chart.formula } : undefined,
   }));
+}
+
+function remapFormula(expression: string, resolve: (field: string) => string) {
+  return expression.replace(/\[([^\]]+)\]/g, (_match, field: string) => `[${resolve(field.trim())}]`);
 }
 
 export function createDashboardTemplate(name: string, grid: DashboardGrid, charts: ChartDefinition[]): DashboardTemplate {
@@ -50,6 +55,7 @@ export function applyTemplateToDataset(template: DashboardTemplate, columns: Cha
     filters: chart.filters.map((filter) => ({ ...filter, field: resolve(filter.field) })),
     comparison: chart.comparison ? { ...chart.comparison, referenceField: resolve(chart.comparison.referenceField) } : undefined,
     thresholds: (chart.thresholds ?? []).map((rule) => ({ ...rule, field: resolve(rule.field) })),
+    formula: chart.formula ? { ...chart.formula, expression: remapFormula(chart.formula.expression, resolve) } : undefined,
   }));
   return { charts, missing: Array.from(missing) };
 }
@@ -66,6 +72,7 @@ export function remapChartFields(charts: ChartDefinition[], fieldMap: Record<str
     filters: chart.filters.map((filter) => ({ ...filter, field: resolve(filter.field) })),
     comparison: chart.comparison ? { ...chart.comparison, referenceField: resolve(chart.comparison.referenceField) } : undefined,
     thresholds: (chart.thresholds ?? []).map((rule) => ({ ...rule, field: resolve(rule.field) })),
+    formula: chart.formula ? { ...chart.formula, expression: remapFormula(chart.formula.expression, resolve) } : undefined,
   }));
 }
 

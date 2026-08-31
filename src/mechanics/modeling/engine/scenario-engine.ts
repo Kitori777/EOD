@@ -1,8 +1,11 @@
 import type { DataRow } from "../../charts/types/chart-types";
 import type { Scenario, ScenarioMetrics } from "../types/model-types";
 
-function numericAverage(rows: DataRow[], headers: string[], aliases: string[], fallback: number): number {
-  const header = headers.find((candidate) => aliases.some((alias) => candidate.toLowerCase().includes(alias)));
+function matchingHeader(headers: string[], aliases: string[]) {
+  return headers.find((candidate) => aliases.some((alias) => candidate.toLowerCase().includes(alias)));
+}
+
+function numericAverage(rows: DataRow[], header: string | undefined, fallback: number): number {
   if (!header) return fallback;
 
   const values = rows
@@ -12,10 +15,18 @@ function numericAverage(rows: DataRow[], headers: string[], aliases: string[], f
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : fallback;
 }
 
+export function supportsScenarioModel(headers: string[]) {
+  return Boolean(
+    matchingHeader(headers, ["revenue", "sales", "przych", "obrót"])
+    && matchingHeader(headers, ["cost", "koszt", "expense"]),
+  );
+}
+
 export function calculateScenario(item: Scenario, rows: DataRow[], headers: string[]): ScenarioMetrics {
-  const baseRevenue = numericAverage(rows, headers, ["revenue", "sales", "przych", "obrót"], 476_250);
-  const baseCost = numericAverage(rows, headers, ["cost", "koszt", "expense"], 316_750);
-  const baseCustomers = numericAverage(rows, headers, ["customer", "klient", "users"], 1_341);
+  if (!supportsScenarioModel(headers)) return { revenue: 0, cost: 0, profit: 0, margin: 0, customers: 0, risk: 0 };
+  const baseRevenue = numericAverage(rows, matchingHeader(headers, ["revenue", "sales", "przych", "obrót"]), 0);
+  const baseCost = numericAverage(rows, matchingHeader(headers, ["cost", "koszt", "expense"]), 0);
+  const baseCustomers = numericAverage(rows, matchingHeader(headers, ["customer", "klient", "users"]), Math.max(rows.length, 1));
   const priceEffect = 1 + item.priceChange / 100;
   const demandEffect = 1 - Math.max(item.priceChange, 0) * 0.004 + Math.min(item.priceChange, 0) * 0.002;
   const campaignEffect = item.choices.campaign === "4" ? 1.08 : 1.035;

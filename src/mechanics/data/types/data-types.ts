@@ -26,6 +26,8 @@ export type DatasetMeta = {
   importedAt: string;
   chunkCount: number;
   sampled: boolean;
+  sourceRows?: number;
+  layout?: "wide" | "long-pivoted" | "transposed";
 };
 
 export type ImportedDataset = {
