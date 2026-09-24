@@ -3,7 +3,7 @@ import { evaluateFormula, referencedFormulaFields } from "../../modeling/engine/
 import { parseProductionField } from "../../modeling/engine/production-field-engine.ts";
 import type { ModelDependencyRule, ModelEconometricDiagnostics, ModelNode, ModelParameter, ModelPropagationStep, ProductionSignalRole } from "../../modeling/types/model-types";
 import type { EconometricModelPreference } from "../types/simulation-types";
-import { fitEconometricResponse } from "./econometric-engine.ts";
+import { fitEconometricResponse } from "../../econometrics/engine/econometric-engine.ts";
 
 const MAX_ECONOMETRIC_ROWS = 360;
 

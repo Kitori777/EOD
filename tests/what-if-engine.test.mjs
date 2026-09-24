@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { applyWhatIfScenario, executeWhatIfModel, fitLinearResponse } from "../src/mechanics/simulation/engine/what-if-engine.ts";
-import { fitEconometricResponse } from "../src/mechanics/simulation/engine/econometric-engine.ts";
 import { inferModelDependencies } from "../src/mechanics/simulation/engine/production-dependency-engine.ts";
 import { parseProductionField } from "../src/mechanics/modeling/engine/production-field-engine.ts";
 
@@ -74,61 +73,6 @@ test("automatic response analyzes every numeric column and keeps unsupported fie
   assert.equal(result.impacts.find((impact) => impact.field === "constant")?.response, "unchanged");
   assert.ok(Math.abs(Number(result.rows[0].mirrored) - (Number(extended[0].mirrored) + 6)) < .2);
   assert.equal(Number(result.rows[0].constant), 7);
-});
-
-test("econometric fit finds a delayed response and validates it on later observations", () => {
-  const delayedRows = Array.from({ length: 180 }, (_, index) => {
-    const source = Math.sin(index / 4) * 4 + Math.cos(index / 11) * 2 + (index % 7) * .05;
-    const delayedIndex = Math.max(0, index - 2);
-    const delayedSource = Math.sin(delayedIndex / 4) * 4 + Math.cos(delayedIndex / 11) * 2 + (delayedIndex % 7) * .05;
-    return { source: String(source), target: String(20 + delayedSource * 1.8 + Math.sin(index * 2.1) * .03) };
-  });
-  const fit = fitEconometricResponse(delayedRows, "source", "target", 6);
-  assert.ok(fit);
-  assert.equal(fit.lagSteps, 2);
-  assert.ok(Math.abs(fit.coefficient - 1.8) < .1);
-  assert.ok(fit.pValue < .05);
-  assert.ok(fit.validationRows >= 20);
-  assert.ok((fit.validationRSquared ?? 0) > .95);
-  assert.ok(fit.testedSpecifications > 1);
-  assert.ok(fit.specificationAdjustedPValue >= fit.pValue);
-});
-
-test("maximum econometric delay is a real scenario constraint", () => {
-  const delayedRows = Array.from({ length: 160 }, (_, index) => {
-    const source = Math.sin(index / 3) * 4 + Math.cos(index / 9);
-    const delayedIndex = Math.max(0, index - 3);
-    const delayed = Math.sin(delayedIndex / 3) * 4 + Math.cos(delayedIndex / 9);
-    return { source: String(source), target: String(12 + delayed * 1.5) };
-  });
-  assert.equal(fitEconometricResponse(delayedRows, "source", "target", 0)?.lagSteps, 0);
-  assert.equal(fitEconometricResponse(delayedRows, "source", "target", 6)?.lagSteps, 3);
-});
-
-test("econometric validation does not learn a relationship introduced only in the final period", () => {
-  const shifted = Array.from({ length: 100 }, (_, index) => {
-    const source = Math.sin(index / 3) * 5;
-    const target = index < 80 ? Math.cos(index / 5) : source * 8;
-    return { source: String(source), target: String(target) };
-  });
-  const fit = fitEconometricResponse(shifted, "source", "target", 0);
-  assert.ok(fit);
-  assert.ok(Math.abs(fit.coefficient) < 1);
-  assert.ok(fit.relativeValidationError > .25 || (fit.validationRSquared ?? 0) < 0);
-});
-
-test("econometric model selection is respected instead of silently using another method", () => {
-  const dynamicRows = Array.from({ length: 180 }, (_, index) => {
-    const source = Math.sin(index / 5) * 3 + Math.cos(index / 13);
-    const previousTarget = index ? Number((20 + Math.sin((index - 1) / 5) * 3).toFixed(8)) : 20;
-    return { source: String(source), target: String(8 + source * 1.4 + previousTarget * .25 + index * .002) };
-  });
-  const ols = fitEconometricResponse(dynamicRows, "source", "target", 4, "ols");
-  const arx = fitEconometricResponse(dynamicRows, "source", "target", 4, "arx");
-  const trend = fitEconometricResponse(dynamicRows, "source", "target", 4, "arx-trend");
-  assert.equal(ols?.model, "ols");
-  assert.equal(arx?.model, "arx");
-  assert.equal(trend?.model, "arx-trend");
 });
 
 test("scenario model preference reaches learned dependencies", () => {

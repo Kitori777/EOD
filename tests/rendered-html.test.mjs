@@ -62,7 +62,7 @@ test("new workspaces start empty while continue restores the full saved dataset"
   assert.match(storage, /indexedDB\.open/);
   assert.match(storage, /rows: DataRow\[]/);
   assert.match(storage, /datasetMeta: DatasetMeta/);
-  assert.match(storage, /version: 2 \| 3 \| 4 \| 5 \| 6/);
+  assert.match(storage, /version: 2 \| 3 \| 4 \| 5 \| 6 \| 7 \| 8 \| 9/);
   assert.match(storage, /modelMode\?: ModelWorkspaceMode/);
   assert.match(application, /snapshot\.view === "compare" \? "simulate"/);
   assert.match(application, /responseMode: "auto"/);
@@ -80,6 +80,31 @@ test("what-if studio lets the user select the econometric method", async () => {
   assert.match(studio, /econometricModel: "arx-trend"/);
   assert.match(studio, /Maksymalne opóźnienie/);
   assert.match(studio, /econometricMaxLag/);
+});
+
+test("OLS studio exposes a readable equation, Python model and predictor scenario", async () => {
+  const [application, studio, engine] = await Promise.all([
+    readFile(new URL("../src/app/EyesOfOdin.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/mechanics/econometrics/components/OlsStudio.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/mechanics/econometrics/engine/multivariate-ols-engine.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(application, /Regresja OLS/);
+  assert.match(application, /modelMode === "ols"/);
+  assert.match(studio, /Zmienna objaśniana Y/);
+  assert.match(studio, /Zmienne objaśniające X/);
+  assert.match(studio, /statsmodels\.formula\.api/);
+  assert.match(studio, /INTERPRETACJA I UZASADNIENIE/);
+  assert.match(studio, /Pierwszy raz z ekonometrią/);
+  assert.match(studio, /JAK POWSTAJE WYNIK/);
+  assert.match(studio, /β̂ = \(XᵀX\)⁻¹Xᵀy/);
+  assert.match(studio, /DIAGNOSTYKA MODELU/);
+  assert.match(studio, /Rzeczywiste a przewidywane/);
+  assert.match(studio, /VIF/);
+  assert.match(studio, /Wybierz, co chcesz zwiększyć lub ustawić/);
+  assert.match(engine, /fitOlsModel/);
+  assert.match(engine, /fSurvivalProbability/);
+  assert.match(engine, /calculateVif/);
+  assert.match(engine, /calculateOlsChange/);
 });
 
 test("settings provide persisted themes, accents, languages and workspace controls", async () => {
@@ -110,9 +135,11 @@ test("project settings persist model constants and customizable analysis views",
   ]);
   assert.match(application, /modelParameters.*modelMemory.*verificationPreferences.*diagnosticPreferences/s);
   assert.match(application, /applyModelMemory/);
-  assert.match(application, /version: 8/);
+  assert.match(application, /version: 9/);
   assert.match(storage, /modelParameters\?: ModelParameter\[]/);
   assert.match(storage, /modelMemory\?: ModelMemoryEntry\[]/);
+  assert.match(storage, /olsSpecification\?: OlsModelSpecification/);
+  assert.match(storage, /olsScenario\?: OlsChangeScenario/);
   assert.match(storage, /verificationPreferences\?: VerificationPreferences/);
   assert.match(storage, /diagnosticPreferences\?: DiagnosticPreferences/);
   assert.match(dialog, /Stałe modelu/);
@@ -220,7 +247,7 @@ test("model inspector exposes real rule, column and connection controls", async 
   assert.match(application, /PRZEBIEG/);
 });
 
-test("ships an offline Windows target as version 0.1.2", async () => {
+test("ships an offline Windows target as version 0.1.3", async () => {
   const [desktopMain, desktopHtml, tauriConfig, cargoConfig, packageJson, appVersion] = await Promise.all([
     readFile(new URL("../src/desktop/main.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/desktop/index.html", import.meta.url), "utf8"),
@@ -233,14 +260,14 @@ test("ships an offline Windows target as version 0.1.2", async () => {
   assert.match(desktopMain, /import EyesOfOdin from "\.\.\/app\/EyesOfOdin"/);
   assert.match(desktopHtml, /<div id="root"><\/div>/);
   assert.equal(config.productName, "Eyes of Odin");
-  assert.equal(config.version, "0.1.2");
-  assert.equal(JSON.parse(packageJson).version, "0.1.2");
+  assert.equal(config.version, "0.1.3");
+  assert.equal(JSON.parse(packageJson).version, "0.1.3");
   assert.equal(config.identifier, "com.eyesofodin.scenariostudio");
   assert.equal(config.build.frontendDist, "../desktop-dist");
   assert.deepEqual(config.bundle.targets, ["nsis"]);
   assert.equal(config.bundle.windows.nsis.installMode, "currentUser");
-  assert.match(cargoConfig, /version = "0.1.2"/);
-  assert.match(appVersion, /APP_VERSION = "0.1.2"/);
+  assert.match(cargoConfig, /version = "0.1.3"/);
+  assert.match(appVersion, /APP_VERSION = "0.1.3"/);
   assert.match(cargoConfig, /tauri = \{ version = "2"/);
   await access(new URL("../src-tauri/icons/icon.ico", import.meta.url));
   await access(new URL("../src/mechanics/charts/components/ChartStudio.tsx", import.meta.url));

@@ -3,7 +3,7 @@
   <h1>Eyes of Odin</h1>
   <p><strong>Lokalne studio wizualizacji danych, limitów i scenariuszy „co, jeśli…”.</strong></p>
   <p>
-    <img alt="Wersja 0.1.2" src="https://img.shields.io/badge/version-0.1.2-39d8c2" />
+    <img alt="Wersja 0.1.3" src="https://img.shields.io/badge/version-0.1.3-39d8c2" />
     <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-2d7dff" />
     <img alt="13 formatów danych" src="https://img.shields.io/badge/data-13%20formats-d7ff45" />
     <img alt="Local first" src="https://img.shields.io/badge/privacy-local--first-9aa6b8" />
@@ -37,7 +37,7 @@ irm https://raw.githubusercontent.com/Kitori777/EOD/main/scripts/install.ps1 | i
 
 Skrypt automatycznie rozpoznaje najnowsze wydanie, pobiera jego instalator, sprawdza sumę SHA-256 i instaluje aplikację dla bieżącego użytkownika. Ta sama komenda służy do pierwszej instalacji i aktualizacji.
 
-Po opublikowaniu taga `v0.1.2` GitHub automatycznie utworzy stronę wydania i dołączy instalator, wersję portable oraz zweryfikowane sumy SHA-256.
+Po opublikowaniu taga `v0.1.3` GitHub automatycznie utworzy stronę wydania i dołączy instalator, wersję portable oraz zweryfikowane sumy SHA-256.
 
 ## Aktualizacja do najnowszego builda
 
@@ -64,6 +64,8 @@ Aktualizator pobiera zawartość najnowszego wydania. Zapisana lokalnie przestrz
 - ręczne limity oraz kreskowane linie percentylowe P75/P90/P95/P99,
 - raport całych zdarzeń przekroczeń wraz z czasem, poziomem alertu i eksportem CSV,
 - wykonywalny model `Źródło → Reguła → Wynik` z walidacją pól i połączeń,
+- pracownia regresji OLS z równaniem, wieloma zmiennymi X, przewodnikiem dla początkujących, testem F, VIF, diagnostyką reszt, interpretacją i kodem Python,
+- scenariusz zmiany wybranego predyktora pokazujący przewidywany wynik Y,
 - lokalny zapis przestrzeni roboczej bez konta i chmury.
 
 ## Pierwsze użycie
@@ -119,19 +121,21 @@ Kontrola obejmuje TypeScript, ESLint, testy jednostkowe, produkcyjną kompilacj�
 src/app                główny interfejs i style
 src/mechanics/charts   wykresy, limity, raporty i szablony
 src/mechanics/data     rejestr formatów, importery i lokalny magazyn danych
-src/mechanics/modeling scenariusze oraz model zależności
+src/mechanics/modeling graf modelu, formuły i wykonanie
+src/mechanics/simulation scenariusze what-if, prognozy i diagnostyka
+src/mechanics/econometrics matematyka modeli OLS i ARX
 src/desktop            punkt startowy aplikacji desktopowej
 src-tauri              natywna obudowa i instalator Windows
 data/ready             gotowe dane demonstracyjne
 tests                  testy regresji i mechanik
 ```
 
-Pełna mapa plików i przepływ danych są opisane w [GUIDE.md](GUIDE.md#architektura-i-foldery).
+Najkrótsza mapa wejścia do kodu znajduje się w [src/README.md](src/README.md), a pełna architektura i przepływ danych są opisane w [GUIDE.md](GUIDE.md#architektura-i-foldery).
 
 ## Prywatność
 
-Eyes of Odin 0.1.2 nie wysyła importowanych danych do serwera. Pliki są odczytywane lokalnie, a pełna sesja projektu jest zapisywana na danym komputerze.
+Eyes of Odin 0.1.3 nie wysyła importowanych danych do serwera. Pliki są odczytywane lokalnie, a pełna sesja projektu jest zapisywana na danym komputerze.
 
 ## Status projektu
 
-Aktualna wersja to 0.1.2. Historia wszystkich zmian znajduje się w [CHANGELOG.md](CHANGELOG.md).
+Aktualna wersja to 0.1.3. Historia wszystkich zmian znajduje się w [CHANGELOG.md](CHANGELOG.md).

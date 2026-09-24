@@ -1,12 +1,12 @@
 # Eyes of Odin — przewodnik aplikacji i projektu
 
-Ten dokument wyjaśnia sposób korzystania z Eyes of Odin 0.1.2 oraz pokazuje, gdzie znajduje się każda mechanika. Jest przeznaczony zarówno dla użytkownika aplikacji, jak i osoby rozwijającej projekt.
+Ten dokument wyjaśnia sposób korzystania z Eyes of Odin 0.1.3 oraz pokazuje, gdzie znajduje się każda mechanika. Jest przeznaczony zarówno dla użytkownika aplikacji, jak i osoby rozwijającej projekt.
 
 ## 1. Czym jest Eyes of Odin
 
 Eyes of Odin to lokalna przestrzeń do eksplorowania danych i sprawdzania konsekwencji zmian. Użytkownik może wczytać plik tekstowy, JSON, skoroszyt albo Parquet, zbudować kilka powiązanych wizualizacji, zawęzić dane do wybranego czasu, ustawić bezpieczne granice oraz modelować warianty „co, jeśli…”.
 
-Wersja 0.1.2 działa bez konta. Dane nie są przesyłane do zewnętrznej usługi.
+Wersja 0.1.3 działa bez konta. Dane nie są przesyłane do zewnętrznej usługi.
 
 ## 2. Główne obszary interfejsu
 
@@ -25,9 +25,10 @@ Pełne panele robocze pojawiają się dopiero po wybraniu zadania. Kliknięcie l
 
 Model jest wizualnym i wykonywalnym grafem zależności. Elementy można dodawać, zaznaczać, przenosić i łączyć w ścieżkę prowadzącą od danych do wyniku. Dla plików procesowych podstawowy przepływ `Źródło → Reguła → Wynik` oblicza przekroczenia wartości ręcznej albo percentyla. Status „Model gotowy” pojawia się dopiero po sprawdzeniu pól i połączeń.
 
-Obszar **Model i symulacja** ma trzy powiązane tryby:
+Obszar **Model i symulacja** ma cztery powiązane tryby:
 
 - **Budowa** — tworzenie grafu, formuł, decyzji, metryk i wyników,
+- **Regresja OLS** — wybór wyniku `Y` i wielu zmiennych `X`, estymacja pełnego równania oraz jego interpretacja,
 - **Symulacja** — zmiana wybranego wejścia bez naruszania pliku źródłowego; wariant przechodzi przez ten sam graf co dane bazowe,
 - **Weryfikacja** — techniczna kontrola jakości danych, poprawności grafu i zakresu aktywnej symulacji, bez oceniania decyzji użytkownika.
 
@@ -127,6 +128,14 @@ Podczas używania szablonu z innym plikiem aplikacja próbuje dopasować nazwy k
 
 ### Symulacja i weryfikacja modelu
 
+W trybie **Regresja OLS** wybierz jedną kolumnę jako zmienną objaśnianą `Y` oraz co najmniej jedną kolumnę jako zmienną objaśniającą `X`. Aplikacja pokazuje równanie z oszacowanymi współczynnikami, tabelę w stylu podsumowania `statsmodels`, podstawowe miary dopasowania oraz równoważny kod Python. Wiersze z brakującą wartością używanego pola są pomijane i jawnie zliczane. Stałe albo współliniowe predyktory zatrzymują obliczenie z komunikatem wskazującym problem.
+
+Sekcja **Interpretacja i uzasadnienie** podsumowuje fakty statystyczne bez orzekania o przyczynowości. Własna notatka pozwala zapisać cel modelu i domenowe uzasadnienie doboru zmiennych. Na końcu można wybrać jeden predyktor, zwiększyć go procentowo, dodać wartość, użyć mnożnika albo ustawić nowy poziom. Pozostałe predyktory pozostają wtedy na swoich średnich, a ekran pokazuje przewidywaną zmianę `Y`.
+
+Dla osób, które nie znają ekonometrii, otwarty przewodnik wyjaśnia praktyczną rolę `Y`, `X`, współczynników `β`, p-value, reszt oraz VIF. Sekcja **Jak powstaje wynik** pokazuje cztery kroki obliczenia: zbudowanie macierzy danych, oszacowanie `β̂ = (XᵀX)⁻¹Xᵀy`, wyliczenie przewidywań i reszt oraz ocenę niepewności.
+
+Sekcja **Diagnostyka modelu** odpowiada na trzy różne pytania. Test F sprawdza, czy wszystkie zmienne X razem wnoszą informację o Y. VIF pokazuje, czy predyktory nie powtarzają tej samej informacji; wartość od 5 wymaga uwagi, a od 10 zwykle oznacza poważną współliniowość. Wykres wartości rzeczywistych i przewidywanych pokazuje trafność dopasowania, a wykres reszt pomaga znaleźć łuk, lejek lub pasma, których prosty model liniowy nie potrafi wyjaśnić.
+
 W trybie **Symulacja** wybierz kolumnę wejściową, operację, wartość oraz zakres rekordów. Program zachowuje oryginał, tworzy wariant i wykonuje oba zbiory przez ten sam graf. Domyślny tryb **Wszystkie automatycznie** sprawdza po kolei każdą kolumnę liczbową. Możesz przełączyć się na **Własny wybór**, jeśli chcesz ograniczyć analizę. Tabela pokazuje wartości przed i po zmianie, różnicę liczbową i procentową oraz źródło obliczenia. Filtry pozwalają rozdzielić kolumny zmienione i niezmienione, a kliknięcie wiersza otwiera jego wykres porównawczy. Sekcja **Wynik całego modelu** porównuje końcowe metryki oraz liczbę alertów.
 
 Formuły i relacje zbudowane w grafie są źródłem nadrzędnym. Dla pozostałych kolumn aplikacja może pokazać estymację bezpośredniej zależności historycznej, ale zmienia wartość tylko wtedy, gdy walidacja modelu jest wystarczająca. Nie tworzy sztucznego łańcucha korelacji między kolejnymi kolumnami. Kolumny bez potwierdzonej reakcji pozostają w zestawieniu jako **Bez wykrytej zmiany**.
@@ -191,9 +200,21 @@ src/
       workers/            kontrolowany odczyt plików tekstowych i skoroszytów poza głównym wątkiem
       types/              limity i kontrakty importu
     modeling/
-      engine/             obliczenia wariantów scenariusza
+      components/         ustawienia oraz weryfikacja modelu użytkownika
+      engine/             formuły, wykonanie grafu i pamięć modelu
       layout/             kolizje, wolne miejsca i automatyczny układ grafu
-      types/              graf, decyzje i wyniki scenariuszy
+      types/              graf, decyzje, parametry i wyniki modelu
+    simulation/
+      components/         interfejs what-if i diagnostyki
+      engine/             scenariusze, prognozy i analiza gotowości danych
+      types/              kontrakty symulacji, prognoz i diagnostyki
+    econometrics/
+      components/         pracownia regresji OLS
+      engine/             dopasowanie i wybór modeli OLS oraz ARX
+      math/               algebra liniowa i funkcje statystyczne
+      types/              obserwacje i wyniki estymacji
+      README.md           przepływ obliczeń oraz mapa plików
+    compare/              porównywanie zbiorów i wyników
 src-tauri/                natywne okno, ikony i konfiguracja instalatora
 data/ready/               gotowe zestawy CSV/XLSX oraz opis schematu
 scripts/                  uruchamianie, instalacja i kontrola jakości
@@ -234,6 +255,7 @@ flowchart LR
 - `createDashboardTemplate(...)` tworzy przenośny układ pulpitu.
 - `applyTemplateToDataset(...)` dopasowuje szablon do nowego pliku.
 - `calculateScenario(...)` oblicza wynik aktywnego wariantu.
+- `fitEconometricResponse(...)` dopasowuje modele OLS i ARX oraz sprawdza je na późniejszej części danych.
 
 ## 7. Zapis lokalny
 
@@ -258,16 +280,18 @@ Usunięcie danych przeglądarki lub magazynu aplikacji usuwa lokalnie zapisany s
 3. Zachowaj kontrakt `ImportedDataset`.
 4. Dodaj mały plik testowy i przypadek błędu.
 
-### Nowa mechanika modelowania
+### Nowa mechanika modelowania lub symulacji
 
-Czyste obliczenia należy umieścić w `src/mechanics/modeling/engine`, a ich typy w `modeling/types`. Główny komponent powinien jedynie przekazywać stan i prezentować wynik.
+Czyste obliczenia grafu i formuł należy umieszczać w `src/mechanics/modeling/engine`, a scenariusze, prognozy i diagnostykę w `src/mechanics/simulation/engine`. Ich typy trafiają do odpowiadającego folderu `types`. Główny komponent powinien jedynie przekazywać stan i prezentować wynik.
+
+Matematyka modeli OLS i ARX ma osobny blok `src/mechanics/econometrics`. Operacje macierzowe i statystyczne trafiają do `math`, a przebieg estymacji do `engine`. Szczegółową ścieżkę wejścia opisuje `src/mechanics/econometrics/README.md`.
 
 Rozmieszczanie elementów należy rozwijać w `src/mechanics/modeling/layout`. Funkcje są deterministyczne i testowane na grafie 25 elementów. Interfejs może wywołać `layoutModelGraph`, `findVacantNodePosition` i `getGraphBounds`, ale nie powinien samodzielnie powielać zasad geometrii.
 
 ### Publikowanie wydania GitHub
 
 1. Upewnij się, że `package.json`, `src-tauri/tauri.conf.json` i tag mają ten sam numer.
-2. Wypchnij tag, np. `v0.1.2`.
+2. Wypchnij tag, np. `v0.1.3`.
 3. `.github/workflows/release.yml` uruchomi pełną kontrolę jakości i kompilację Tauri.
 4. `scripts/package-release.ps1` przygotuje instalator, portable oraz `SHA256SUMS.txt`.
 5. Workflow utworzy GitHub Release, z którego korzysta `scripts/install.ps1` oraz przycisk pobierania w README.

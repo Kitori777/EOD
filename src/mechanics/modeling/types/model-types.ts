@@ -1,6 +1,6 @@
 export type ViewId = "model" | "data" | "charts" | "paths" | "compare";
 
-export type ModelWorkspaceMode = "build" | "simulate" | "verify";
+export type ModelWorkspaceMode = "build" | "ols" | "simulate" | "verify";
 
 export type BottomTab = "results" | "data" | "issues";
 

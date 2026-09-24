@@ -18,6 +18,8 @@ import type { DatasetMeta, ImportProgress } from "../mechanics/data/types/data-t
 import { importDataFile, supportedDataFile } from "../mechanics/data/importers/file-import";
 import { DATA_FILE_ACCEPT, SUPPORTED_DATA_FORMAT_LABELS, workbookDataFile } from "../mechanics/data/importers/format-registry";
 import { inspectWorkbookSheets } from "../mechanics/data/importers/workbook-import";
+import { OlsStudio } from "../mechanics/econometrics/components/OlsStudio";
+import type { OlsChangeScenario, OlsModelSpecification } from "../mechanics/econometrics/types/ols-types";
 import { calculateScenario, supportsScenarioModel } from "../mechanics/modeling/engine/scenario-engine";
 import { executeDataModel, validateDataModel } from "../mechanics/modeling/engine/model-execution-engine";
 import { evaluateFormulaSeries } from "../mechanics/modeling/engine/formula-engine";
@@ -40,6 +42,8 @@ type ColumnProfile = {
 };
 
 type BottomPanelMode = "collapsed" | "normal" | "maximized";
+const EMPTY_OLS_SPECIFICATION: OlsModelSpecification = { targetField: "", predictorFields: [], includeIntercept: true, justification: "" };
+const EMPTY_OLS_SCENARIO: OlsChangeScenario = { predictorField: "", operation: "percent", value: 10 };
 type ModelUndoAction =
   | { kind: "node"; node: ModelNode; edges: ModelEdge[] }
   | { kind: "edge"; edge: ModelEdge };
@@ -359,6 +363,8 @@ export default function EyesOfOdin() {
   const [dependencyRules, setDependencyRules] = useState<ModelDependencyRule[]>([]);
   const [modelParameters, setModelParameters] = useState<ModelParameter[]>([]);
   const [modelMemory, setModelMemory] = useState<ModelMemoryEntry[]>([]);
+  const [olsSpecification, setOlsSpecification] = useState<OlsModelSpecification>(EMPTY_OLS_SPECIFICATION);
+  const [olsScenario, setOlsScenario] = useState<OlsChangeScenario>(EMPTY_OLS_SCENARIO);
   const [verificationPreferences, setVerificationPreferences] = useState<VerificationPreferences>(() => ({ ...DEFAULT_VERIFICATION_PREFERENCES, visibleAreas: [...DEFAULT_VERIFICATION_PREFERENCES.visibleAreas], visibleSeverities: [...DEFAULT_VERIFICATION_PREFERENCES.visibleSeverities], customItems: [] }));
   const [diagnosticPreferences, setDiagnosticPreferences] = useState<DiagnosticPreferences>(() => ({ ...DEFAULT_DIAGNOSTIC_PREFERENCES, visibleSections: [...DEFAULT_DIAGNOSTIC_PREFERENCES.visibleSections], summaryMetrics: [...DEFAULT_DIAGNOSTIC_PREFERENCES.summaryMetrics], visibleSeverities: [...DEFAULT_DIAGNOSTIC_PREFERENCES.visibleSeverities], monitoredFields: [] }));
   const [modelExecution, setModelExecution] = useState<ModelExecutionResult | null>(null);
@@ -459,7 +465,7 @@ export default function EyesOfOdin() {
   useEffect(() => {
     if (!workspaceActive) return;
     const snapshot: WorkspaceSnapshot = {
-      version: 8,
+      version: 9,
       projectName,
       modelName,
       rows,
@@ -485,6 +491,8 @@ export default function EyesOfOdin() {
       dependencyRules,
       modelParameters,
       modelMemory,
+      olsSpecification,
+      olsScenario,
       verificationPreferences,
       diagnosticPreferences,
     };
@@ -495,7 +503,7 @@ export default function EyesOfOdin() {
       }).catch(() => setToast(label("Nie udało się zapisać projektu lokalnie", "The project could not be saved locally")));
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [workspaceActive, projectName, modelName, rows, headers, datasetName, datasetId, datasetMeta, charts, dashboardGrid, templates, defaultTemplateId, nodes, edges, scenarios, scenarioId, selectedNodeId, view, modelMode, zoom, canvasPan, whatIfScenarios, activeWhatIfId, dependencyRules, modelParameters, modelMemory, verificationPreferences, diagnosticPreferences]);
+  }, [workspaceActive, projectName, modelName, rows, headers, datasetName, datasetId, datasetMeta, charts, dashboardGrid, templates, defaultTemplateId, nodes, edges, scenarios, scenarioId, selectedNodeId, view, modelMode, zoom, canvasPan, whatIfScenarios, activeWhatIfId, dependencyRules, modelParameters, modelMemory, olsSpecification, olsScenario, verificationPreferences, diagnosticPreferences]);
 
   useEffect(() => {
     localStorage.setItem("eyes-of-odin-ui-v1", JSON.stringify({ showExplorer, showInspector, bottomPanelMode, explorerWidth, inspectorWidth, resultsHeight }));
@@ -537,6 +545,9 @@ export default function EyesOfOdin() {
     const restoredEdges = snapshot.edges ?? [];
     const restoredNodes = hasNodeCollisions(snapshot.nodes) ? layoutModelGraph(snapshot.nodes, restoredEdges) : snapshot.nodes;
     const restoredScenarios = snapshot.scenarios.length ? snapshot.scenarios : initialScenarios;
+    const restoredNumericFields = profileColumns(snapshot.rows, snapshot.headers).filter((profile) => profile.type === "number" && profile.unique > 1).map((profile) => profile.name);
+    const defaultOlsTarget = restoredNumericFields.at(-1) ?? "";
+    const defaultOlsPredictors = restoredNumericFields.filter((field) => field !== defaultOlsTarget).slice(0, 2);
     setProjectName(snapshot.projectName?.trim() || "Model wzrostu sprzedaży");
     setModelName(snapshot.modelName?.trim() || "Model wzrostu");
     setRows(snapshot.rows);
@@ -573,6 +584,8 @@ export default function EyesOfOdin() {
     setDependencyRules(snapshot.dependencyRules ?? []);
     setModelParameters(snapshot.modelParameters ?? []);
     setModelMemory(snapshot.modelMemory ?? []);
+    setOlsSpecification(snapshot.olsSpecification ?? { targetField: defaultOlsTarget, predictorFields: defaultOlsPredictors, includeIntercept: true, justification: "" });
+    setOlsScenario(snapshot.olsScenario ?? { predictorField: defaultOlsPredictors[0] ?? "", operation: "percent", value: 10 });
     setVerificationPreferences({
       ...DEFAULT_VERIFICATION_PREFERENCES,
       ...snapshot.verificationPreferences,
@@ -598,7 +611,7 @@ export default function EyesOfOdin() {
   const resumeWorkspace = async () => {
     try {
       const saved = await loadWorkspace();
-      if (saved?.version === 2 || saved?.version === 3 || saved?.version === 4 || saved?.version === 5 || saved?.version === 6 || saved?.version === 7 || saved?.version === 8) {
+      if (saved?.version === 2 || saved?.version === 3 || saved?.version === 4 || saved?.version === 5 || saved?.version === 6 || saved?.version === 7 || saved?.version === 8 || saved?.version === 9) {
         applyWorkspaceSnapshot(saved);
         return;
       }
@@ -613,7 +626,7 @@ export default function EyesOfOdin() {
       const legacyRows = parsedSample.rows;
       const legacyHeaders = parsedSample.headers;
       applyWorkspaceSnapshot({
-        version: 8,
+        version: 9,
         projectName: legacy.projectName ?? "Model wzrostu sprzedaży",
         modelName: legacy.modelName ?? "Model wzrostu",
         rows: legacyRows,
@@ -638,6 +651,8 @@ export default function EyesOfOdin() {
         dependencyRules: [],
         modelParameters: [],
         modelMemory: [],
+        olsSpecification: EMPTY_OLS_SPECIFICATION,
+        olsScenario: EMPTY_OLS_SCENARIO,
         verificationPreferences: { ...DEFAULT_VERIFICATION_PREFERENCES, visibleAreas: [...DEFAULT_VERIFICATION_PREFERENCES.visibleAreas], visibleSeverities: [...DEFAULT_VERIFICATION_PREFERENCES.visibleSeverities], customItems: [] },
         diagnosticPreferences: { ...DEFAULT_DIAGNOSTIC_PREFERENCES, visibleSections: [...DEFAULT_DIAGNOSTIC_PREFERENCES.visibleSections], summaryMetrics: [...DEFAULT_DIAGNOSTIC_PREFERENCES.summaryMetrics], visibleSeverities: [...DEFAULT_DIAGNOSTIC_PREFERENCES.visibleSeverities], monitoredFields: [] },
       });
@@ -665,6 +680,8 @@ export default function EyesOfOdin() {
     setDependencyRules([]);
     setModelParameters([]);
     setModelMemory([]);
+    setOlsSpecification(EMPTY_OLS_SPECIFICATION);
+    setOlsScenario(EMPTY_OLS_SCENARIO);
     setVerificationPreferences({ ...DEFAULT_VERIFICATION_PREFERENCES, visibleAreas: [...DEFAULT_VERIFICATION_PREFERENCES.visibleAreas], visibleSeverities: [...DEFAULT_VERIFICATION_PREFERENCES.visibleSeverities], customItems: [] });
     setDiagnosticPreferences({ ...DEFAULT_DIAGNOSTIC_PREFERENCES, visibleSections: [...DEFAULT_DIAGNOSTIC_PREFERENCES.visibleSections], summaryMetrics: [...DEFAULT_DIAGNOSTIC_PREFERENCES.summaryMetrics], visibleSeverities: [...DEFAULT_DIAGNOSTIC_PREFERENCES.visibleSeverities], monitoredFields: [] });
     setSelectedNodeId("");
@@ -715,6 +732,8 @@ export default function EyesOfOdin() {
       const numericFields = importedProfiles.filter((profile) => profile.type === "number").map((profile) => profile.name);
       const varyingNumericFields = importedProfiles.filter((profile) => profile.type === "number" && profile.unique > 1).map((profile) => profile.name);
       const whatIfInput = varyingNumericFields[0] ?? numericFields[0] ?? "";
+      const olsTarget = varyingNumericFields.at(-1) ?? numericFields.at(-1) ?? "";
+      const olsPredictors = varyingNumericFields.filter((field) => field !== olsTarget).slice(0, 2);
       const nextWhatIf: WhatIfScenario = {
         id: `what-if-${Date.now()}`,
         name: "Scenariusz 1",
@@ -731,6 +750,8 @@ export default function EyesOfOdin() {
       setWhatIfScenarios(numericFields.length ? [nextWhatIf] : []);
       setActiveWhatIfId(numericFields.length ? nextWhatIf.id : "");
       setDependencyRules([]);
+      setOlsSpecification({ targetField: olsTarget, predictorFields: olsPredictors, includeIntercept: true, justification: "" });
+      setOlsScenario({ predictorField: olsPredictors[0] ?? "", operation: "percent", value: 10 });
       const defaultTemplate = templates.find((template) => template.id === defaultTemplateId);
       if (defaultTemplate) {
         const applied = applyTemplateToDataset(defaultTemplate, importedColumns, imported.meta.id);
@@ -1168,6 +1189,7 @@ export default function EyesOfOdin() {
 
   const commands = [
     { label: label("Otwórz budowę modelu", "Open model builder"), detail: label("Widok grafu", "Graph view"), action: () => { setView("model"); setModelMode("build"); } },
+    { label: label("Otwórz pracownię regresji OLS", "Open OLS regression studio"), detail: label("Równanie, współczynniki i uzasadnienie", "Equation, coefficients and rationale"), action: () => { setView("model"); setModelMode("ols"); setShowInspector(false); } },
     { label: label("Otwórz dane", "Open data"), detail: datasetName, action: () => setView("data") },
     { label: label("Otwórz kreator wykresów", "Open chart builder"), detail: label(`${charts.length} na pulpicie`, `${charts.length} on dashboard`), action: () => setView("charts") },
     { label: label("Otwórz diagnostykę", "Open diagnostics"), detail: datasetName, action: () => setView("paths") },
@@ -1393,6 +1415,7 @@ export default function EyesOfOdin() {
     if (nodeId) { setSelectedNodeId(nodeId); setShowInspector(true); }
   };
   const openModelSimulation = () => { setView("model"); setModelMode("simulate"); setShowInspector(false); };
+  const openOlsStudio = () => { setView("model"); setModelMode("ols"); setShowInspector(false); };
   const openHelpDestination = (destination: HelpDestination) => {
     setHelpOpen(false);
     if (destination === "settings") { setSettingsOpen(true); return; }
@@ -1402,6 +1425,7 @@ export default function EyesOfOdin() {
     setView(destination);
   };
   const renderDiagnostics = () => <DiagnosticStudio rows={rows} columns={profiles.map(({ name, type }) => ({ name, type }))} datasetName={datasetName} sampled={datasetMeta.sampled} nodes={nodes} edges={edges} dependencyRules={dependencyRules} modelParameters={modelParameters} scenario={whatIfScenarios.find((item) => item.id === activeWhatIfId) ?? whatIfScenarios[0]} preferences={diagnosticPreferences} onPreferencesChange={setDiagnosticPreferences} onCustomize={() => { setModelSettingsTab("diagnostics"); setModelSettingsOpen(true); }} onOpenModel={openModelBuild} onOpenSimulation={openModelSimulation} />;
+  const renderOls = () => <OlsStudio rows={modelRows} columns={profiles.map(({ name, type }) => ({ name, type }))} sampled={datasetMeta.sampled} specification={olsSpecification} scenario={olsScenario} onSpecificationChange={setOlsSpecification} onScenarioChange={setOlsScenario} />;
   const renderWhatIf = () => <WhatIfStudio rows={modelRows} columns={profiles.map(({ name, type }) => ({ name, type }))} scenarios={whatIfScenarios} activeScenarioId={activeWhatIfId} sampled={datasetMeta.sampled} nodes={nodes} edges={edges} dependencyRules={dependencyRules} modelParameters={modelParameters} modelMemory={modelMemory} onChange={setWhatIfScenarios} onActiveChange={setActiveWhatIfId} onDependencyChange={setDependencyRules} />;
   const renderVerification = () => <ModelVerificationStudio rows={modelRows} columns={profiles.map(({ name, type }) => ({ name, type }))} nodes={nodes} edges={edges} dependencyRules={dependencyRules} modelParameters={modelParameters} scenario={whatIfScenarios.find((item) => item.id === activeWhatIfId) ?? whatIfScenarios[0]} sampled={datasetMeta.sampled} preferences={verificationPreferences} onPreferencesChange={setVerificationPreferences} onCustomize={() => { setModelSettingsTab("checklist"); setModelSettingsOpen(true); }} onOpenBuild={openModelBuild} onOpenSimulation={openModelSimulation} onOpenDiagnostics={() => setView("paths")} />;
   void renderPaths;
@@ -1502,11 +1526,14 @@ export default function EyesOfOdin() {
 
           <section className="center-stage">
             {view === "model" && <div className="stage-toolbar">
-              <div className="model-mode-tabs" role="tablist" aria-label={preferences.language === "en" ? "Model workspace mode" : "Tryb pracy modelu"}><button role="tab" aria-selected={modelMode === "build"} className={modelMode === "build" ? "active" : ""} onClick={() => setModelMode("build")}><span>01</span> {preferences.language === "en" ? "Build" : "Budowa"}</button><button role="tab" aria-selected={modelMode === "simulate"} className={modelMode === "simulate" ? "active" : ""} disabled={!hasDataset} onClick={() => setModelMode("simulate")}><span>02</span> {preferences.language === "en" ? "Simulation" : "Symulacja"}</button><button role="tab" aria-selected={modelMode === "verify"} className={modelMode === "verify" ? "active" : ""} disabled={!hasDataset} onClick={() => setModelMode("verify")}><span>03</span> {preferences.language === "en" ? "Verification" : "Weryfikacja"}</button></div>
+              <div className="model-mode-tabs" role="tablist" aria-label={preferences.language === "en" ? "Model workspace mode" : "Tryb pracy modelu"}><button role="tab" aria-selected={modelMode === "build"} className={modelMode === "build" ? "active" : ""} onClick={() => setModelMode("build")}><span>01</span> {preferences.language === "en" ? "Build" : "Budowa"}</button><button role="tab" aria-selected={modelMode === "ols"} className={modelMode === "ols" ? "active" : ""} disabled={!hasDataset} onClick={openOlsStudio}><span>02</span> {preferences.language === "en" ? "OLS regression" : "Regresja OLS"}</button><button role="tab" aria-selected={modelMode === "simulate"} className={modelMode === "simulate" ? "active" : ""} disabled={!hasDataset} onClick={() => setModelMode("simulate")}><span>03</span> {preferences.language === "en" ? "Simulation" : "Symulacja"}</button><button role="tab" aria-selected={modelMode === "verify"} className={modelMode === "verify" ? "active" : ""} disabled={!hasDataset} onClick={() => setModelMode("verify")}><span>04</span> {preferences.language === "en" ? "Verification" : "Weryfikacja"}</button></div>
               {modelMode === "build" && <div className="stage-toolbar-actions"><button className={showExplorer ? "active" : ""} onClick={() => setShowExplorer((visible) => !visible)}>☰ {t("explorer")}</button><button className={showInspector ? "active" : ""} disabled={!selectedNode} onClick={() => setShowInspector((visible) => !visible)}>☷ {t("inspector")}</button><button className={bottomPanelMode !== "collapsed" ? "active" : ""} disabled={!hasDataset} onClick={() => setBottomPanelMode((mode) => mode === "collapsed" ? "normal" : "collapsed")}>▤ {t("resultsPanel")}</button><span /><button className={modelMemory.some((entry) => entry.enabled && entry.useInModel) ? "active" : ""} title={preferences.language === "en" ? `${modelMemory.length} saved memory entries` : `${modelMemory.length} zapisanych wpisów pamięci`} onClick={() => { setModelSettingsTab("parameters"); setModelSettingsOpen(true); }}>⚙ {preferences.language === "en" ? "Parameters & memory" : "Parametry i pamięć"}{modelMemory.length ? ` · ${modelMemory.length}` : ""}</button><div className="model-block-picker"><button className={blockMenuOpen ? "active" : ""} onClick={() => setBlockMenuOpen((open) => !open)}>＋ {t("block")}</button>{blockMenuOpen && <div className="model-block-menu">{(Object.keys(kindMeta) as NodeKind[]).map((kind) => <button key={kind} onClick={() => { addNode(kind); setBlockMenuOpen(false); }}><span className={`node-${kind}`}>{kindMeta[kind].icon}</span><div><strong>{kindLabel(kind)}</strong><small>{kind === "source" ? label("Nowe źródło danych", "New data source") : kind === "transform" ? label("Formuła lub zmiana", "Formula or change") : kind === "decision" ? label("Próg i alert", "Threshold and alert") : kind === "metric" ? label("Obliczenie", "Calculation") : label("Końcowy rezultat", "Final result")}</small></div></button>)}</div>}</div><button disabled={!nodes.length} onClick={arrangeModel}>⌘ {t("arrange")}</button><button className={connectionFromId ? "active" : ""} disabled={nodes.length < 2} onClick={() => connectionFromId ? setConnectionFromId("") : startConnection()}>⌁ {connectionFromId ? (preferences.language === "en" ? "Cancel relation" : "Anuluj relację") : t("relation")}</button><button disabled={!lastModelAction} onClick={restoreLastModelAction} title={preferences.language === "en" ? "Undo deletion (Ctrl+Z)" : "Cofnij usunięcie (Ctrl+Z)"}>↶ {preferences.language === "en" ? "Undo" : "Cofnij"}</button></div>}
-              <div className={`model-health ${scenarioModelAvailable || modelValidation.ready ? "ready" : "not-ready"}`}><i /> {scenarioModelAvailable || modelValidation.ready ? label("Model gotowy", "Model ready") : nodes.length ? label("Model wymaga konfiguracji", "Model needs configuration") : label("Pusty model", "Empty model")} <span>·</span> {nodes.length} {label("bloków", "blocks")} <span>·</span> {edges.length} {label("relacji", "relations")}</div>
+              {modelMode === "ols"
+                ? <div className={`model-health ${olsSpecification.targetField && olsSpecification.predictorFields.length ? "ready" : "not-ready"}`}><i /> {label("Model OLS", "OLS model")} <span>·</span> Y: {olsSpecification.targetField || "—"} <span>·</span> {olsSpecification.predictorFields.length} {label("zmiennych X", "X variables")}</div>
+                : <div className={`model-health ${scenarioModelAvailable || modelValidation.ready ? "ready" : "not-ready"}`}><i /> {scenarioModelAvailable || modelValidation.ready ? label("Model gotowy", "Model ready") : nodes.length ? label("Model wymaga konfiguracji", "Model needs configuration") : label("Pusty model", "Empty model")} <span>·</span> {nodes.length} {label("bloków", "blocks")} <span>·</span> {edges.length} {label("relacji", "relations")}</div>}
             </div>}
             {view === "model" && modelMode === "build" && renderModel()}
+            {view === "model" && modelMode === "ols" && (hasDataset ? renderOls() : renderDataRequired(label("Brak modelu OLS", "No OLS model"), label("Wczytaj dane, aby zbudować równanie regresji.", "Load data to build a regression equation.")))}
             {view === "model" && modelMode === "simulate" && (hasDataset ? renderWhatIf() : renderDataRequired(label("Brak symulacji", "No simulation"), label("Wczytaj dane, aby utworzyć wariant modelu.", "Load data to create a model variant.")))}
             {view === "model" && modelMode === "verify" && (hasDataset ? renderVerification() : renderDataRequired(label("Brak weryfikacji", "No verification"), label("Wczytaj dane, aby sprawdzić gotowość modelu.", "Load data to verify model readiness.")))}
             {view === "data" && renderData()}

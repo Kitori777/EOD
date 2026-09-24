@@ -1,6 +1,7 @@
 import type { DashboardGrid, DashboardTemplate } from "../../mechanics/charts/templates/dashboard-templates";
 import type { ChartDefinition, DataRow } from "../../mechanics/charts/types/chart-types";
 import type { DatasetMeta } from "../../mechanics/data/types/data-types";
+import type { OlsChangeScenario, OlsModelSpecification } from "../../mechanics/econometrics/types/ols-types.ts";
 import type { ModelDependencyRule, ModelEdge, ModelMemoryEntry, ModelNode, ModelParameter, ModelWorkspaceMode, Scenario, ViewId } from "../../mechanics/modeling/types/model-types";
 import type { DiagnosticPreferences, VerificationPreferences, WhatIfScenario } from "../../mechanics/simulation/types/simulation-types";
 import type { Point } from "../layout/workspace-layout";
@@ -9,7 +10,7 @@ export const WORKSPACE_MARKER_KEY = "eyes-of-odin-workspace-v2";
 export const LEGACY_WORKSPACE_KEY = "eyes-of-odin-workspace-v1";
 
 export type WorkspaceSnapshot = {
-  version: 2 | 3 | 4 | 5 | 6 | 7 | 8;
+  version: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
   projectName?: string;
   modelName?: string;
   rows: DataRow[];
@@ -35,6 +36,8 @@ export type WorkspaceSnapshot = {
   dependencyRules?: ModelDependencyRule[];
   modelParameters?: ModelParameter[];
   modelMemory?: ModelMemoryEntry[];
+  olsSpecification?: OlsModelSpecification;
+  olsScenario?: OlsChangeScenario;
   verificationPreferences?: VerificationPreferences;
   diagnosticPreferences?: DiagnosticPreferences;
 };
@@ -90,7 +93,7 @@ export async function saveWorkspace(snapshot: WorkspaceSnapshot): Promise<void> 
       transaction.onerror = () => reject(transaction.error ?? new Error("Nie udało się zapisać lokalnego projektu."));
       transaction.onabort = () => reject(transaction.error ?? new Error("Przerwano zapis lokalnego projektu."));
     });
-    localStorage.setItem(WORKSPACE_MARKER_KEY, JSON.stringify({ version: 8, savedAt: new Date().toISOString() }));
+    localStorage.setItem(WORKSPACE_MARKER_KEY, JSON.stringify({ version: 9, savedAt: new Date().toISOString() }));
   } finally {
     database.close();
   }

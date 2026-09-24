@@ -2,6 +2,32 @@
 
 Wszystkie istotne zmiany w Eyes of Odin są dokumentowane w tym pliku. Format jest zgodny z [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), a wersje używają [Semantic Versioning](https://semver.org/).
 
+## [0.1.3] — 2026-09-15
+
+### Dodano
+
+- osobną pracownię regresji OLS z wyborem jednej zmiennej objaśnianej `Y` i wielu zmiennych objaśniających `X`,
+- pełne równanie `ŷ = β₀ + β₁X₁ + β₂X₂`, tabelę współczynników, błędów standardowych, statystyk t, p-value i 95-procentowych przedziałów ufności,
+- podsumowanie R², skorygowanego R², RMSE, MAE, statystyki Durbin–Watsona, liczebności próby i pominiętych obserwacji,
+- generowaną interpretację wyniku, miejsce na własne uzasadnienie analityka oraz ostrzeżenie przed traktowaniem zależności jako dowodu przyczynowości,
+- kod Python `statsmodels` odpowiadający aktualnej specyfikacji modelu, gotowy do skopiowania,
+- symulację zmiany wybranego predyktora przy utrzymaniu pozostałych zmiennych na wartościach średnich,
+- trwały zapis konfiguracji OLS i scenariusza w dziewiątej wersji przestrzeni roboczej,
+- mapy wejścia do kodu w `src/README.md`, `src/app/README.md`, `src/mechanics/README.md` oraz dokumentację modułu ekonometrycznego.
+- przewodnik OLS dla osób bez przygotowania ekonometrycznego, objaśniający role `Y`, `X`, `β`, p-value, reszt i VIF,
+- zwijany przebieg estymacji od macierzy danych przez `β̂ = (XᵀX)⁻¹Xᵀy` do reszt i oceny niepewności,
+- test F całego modelu, standardowy błąd reszt, diagnostykę VIF oraz wykresy wartości przewidywanych i reszt.
+
+### Zmieniono
+
+- wydzielono matematykę ekonometryczną do jednego modułu `src/mechanics/econometrics`, rozdzielając algebrę liniową, statystykę, typy i silniki estymacji,
+- obszar Model ma teraz cztery etapy pracy: Budowa, Regresja OLS, Symulacja i Weryfikacja,
+- uporządkowano opis architektury, aby rozróżniał modelowanie, symulację i ekonometrię.
+
+### Naprawiono
+
+- czytelne odrzucanie stałych, niekompletnych i współliniowych danych wejściowych przed uruchomieniem wielowymiarowego OLS.
+
 ## [0.1.2] — 2026-08-26
 
 ### Dodano
